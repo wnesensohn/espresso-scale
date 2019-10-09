@@ -1,52 +1,138 @@
-/*** Arduino Hampel Filter Library ***
-
-This library implements a Hampel filter for numerical data on Arduino. A Hampel filter is useful to find outliers in data. The sensitivity of this Hampel filter and the size of the data window that the filter looks at are adjustable.
-
-The filter works on any numerical values, like 2.02, 35.98 and -232.43, as long as they are between -255.00 and 255.00. The filter delivers two-digit precision.
-
-Further information about the Hampel filter can be found here:
-    (1) https://www.seedtest.org/upload/cms/user/presentation2Remund2.pdf
-        (checked on 2016-02-11)
-    (2) http://dimacs.rutgers.edu/Workshops/DataCleaning/slides/pearson2.pdf
-        (checked on 2016-02-11)
-
-Library written by Florian Roscheck
-Simplified BSD license, all text above must be included in any redistribution
-***/
-
 #ifndef HampelFilter_h
 #define HampelFilter_h
 
+//
+// Released to the public domain
+//
+// Remarks:
+// This is a lean but fast version.
+// Initially, the buffer is filled with a "default_value". To get real median values
+// you have to fill the object with N values, where N is the size of the sliding window.
+// For example: for(int i=0; i < 32; i++) myMedian.addValue(readSensor());
+//
+// Constructor:
+// FastRunningMedian<datatype_of_content, size_of_sliding_window, default_value>
+// maximim size_of_sliding_window is 255
+// Methods:
+// addValue(val) adds a new value to the buffers (and kicks the oldest)
+// getMedian() returns the current median value
+//
+//
+// Usage:
+// #include "FastRunningMedian.h"
+// FastRunningMedian<unsigned int,32, 0> myMedian;
+// ....
+// myMedian.addValue(value); // adds a value
+// m = myMedian.getMedian(); // retieves the median
+//
+
 #include <inttypes.h>
-#include <stddef.h>
 
-class HampelFilter {
+template <uint8_t N>
+class FastRunningMedian
+{
+
 public:
-	// constructor
-	HampelFilter(float i_default_val, uint8_t i_window_size, float i_scaling_factor);
+  FastRunningMedian()
+  {
+    _buffer_ptr = N;
+    _window_size = N;
+    _median_ptr = N / 2;
 
-	// adjustable filter parameters
-	uint8_t window_size;	// no. of data points in the filter buffer
-	uint16_t scaling_factor;	// scaling factor setting the outlier detection threshold
+    // Init buffers
+    uint8_t i = _window_size;
+    while (i > 0)
+    {
+      i--;
+      _inbuffer[i] = 0;
+      _sortbuffer[i] = 0;
+    }
+  };
 
-	void write(float i_new_value_flt);	// add value to buffer
-	float readMedian();					// read median
-	float readMAD();					// read median absolute deviation (MAD)
-	float readOrderedValue(int i_position_in_list); // read specific value from buffer
-	bool checkIfOutlier(float i_qry_value);	// check if queried value is an outlier
+  float getMedian()
+  {
+    // buffers are always sorted.
+    return _sortbuffer[_median_ptr];
+  }
+
+  void addValue(float new_value)
+  {
+    // comparision with 0 is fast, so we decrement _buffer_ptr
+    if (_buffer_ptr == 0)
+      _buffer_ptr = _window_size;
+
+    _buffer_ptr--;
+
+    float old_value = _inbuffer[_buffer_ptr]; // retrieve the old value to be replaced
+    if (new_value == old_value)               // if the value is unchanged, do nothing
+      return;
+
+    _inbuffer[_buffer_ptr] = new_value; // fill the new value in the cyclic buffer
+
+    // search the old_value in the sorted buffer
+    uint8_t i = _window_size;
+    while (i > 0)
+    {
+      i--;
+      if (old_value == _sortbuffer[i])
+        break;
+    }
+
+    // i is the index of the old_value in the sorted buffer
+    _sortbuffer[i] = new_value; // replace the value
+
+    // the sortbuffer is always sorted, except the [i]-element..
+    if (new_value > old_value)
+    {
+      //  if the new value is bigger than the old one, make a bubble sort upwards
+      for (uint8_t p = i, q = i + 1; q < _window_size; p++, q++)
+      {
+        // bubble sort step
+        if (_sortbuffer[p] > _sortbuffer[q])
+        {
+          float tmp = _sortbuffer[p];
+          _sortbuffer[p] = _sortbuffer[q];
+          _sortbuffer[q] = tmp;
+        }
+        else
+        {
+          // done ! - found the right place
+          return;
+        }
+      }
+    }
+    else
+    {
+      // else new_value is smaller than the old one, bubble downwards
+      for (int p = i - 1, q = i; q > 0; p--, q--)
+      {
+        if (_sortbuffer[p] > _sortbuffer[q])
+        {
+          float tmp = _sortbuffer[p];
+          _sortbuffer[p] = _sortbuffer[q];
+          _sortbuffer[q] = tmp;
+        }
+        else
+        {
+          // done !
+          return;
+        }
+      }
+    }
+  }
 
 private:
-	// heap allocation of buffers
-	int16_t* inbuffer;		// cyclic buffer for incoming values
-	int16_t* sortbuffer;	// sorted buffer to determine median
-	int16_t* difmedbuffer;	// sorted buffer of absolute differences to median
+  // Pointer to the last added element in _inbuffer
+  uint8_t _buffer_ptr;
+  // sliding window size
+  uint8_t _window_size;
+  // position of the median value in _sortbuffer
+  uint8_t _median_ptr;
 
-	uint8_t buffer_ptr;		// pointer to current value index of cyclic inbuffer
-	uint8_t median_ptr;		// pointer to median value of sortbuffer and difmedbuffer
-
-	int16_t readMedianInt();// read median as integer (123 instead of 1.23)
-	int16_t readMADInt();	// read MAD as integer
-	void combSort11(int16_t *input, size_t size); // perform comb sort on data
+  // cyclic buffer for incoming values
+  float _inbuffer[N];
+  // sorted buffer
+  float _sortbuffer[N];
 };
 
 #endif

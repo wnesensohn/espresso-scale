@@ -9,7 +9,8 @@
 
 extern void Init_Hx711();
 extern unsigned long HX711_Read(void);
-extern float Get_Weight();
+extern float Get_Weight(int times);
 extern void Get_Gross();
+extern void adjust_scale(float scale);
 
 #endif
