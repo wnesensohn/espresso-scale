@@ -55,6 +55,17 @@ public:
     return _sortbuffer[_median_ptr];
   }
 
+  float getOldestValue()
+  {
+    uint8_t oldest_ptr = _buffer_ptr + 1;
+    if(oldest_ptr == _window_size)
+    {
+      oldest_ptr = 0;
+    }
+
+    return _inbuffer[oldest_ptr];
+  }
+
   void addValue(float new_value)
   {
     // comparision with 0 is fast, so we decrement _buffer_ptr

@@ -3,12 +3,13 @@
 
 // All code under GPL v2 (see LICENSE), except where other licenses apply.
 
-#include <M5StickC.h>
+#include <M5Stack.h>
 #include "HX711.h"
 #include "HampelFilter.h"
 
-int BUTTON_HOME = 37;
-int BUTTON_PIN = 39;
+HX711 scale(22, 21); // GROVE A
+//HX711 scale(36, 26); // GROVE B
+//HX711 scale(16, 17); // GROVE C
 
 // TODO (general): 
 // * auto-zeroing (zero large weight-changes in small time-increments)
@@ -25,8 +26,11 @@ int BUTTON_PIN = 39;
 
 // TODO: Add a method to calibrate the scale by using a pre-defined weight
 float current_scale = 890;
+float auto_zero_eps = 0.005;
 
-FastRunningMedian<20> hampel_filter;
+FastRunningMedian<31> hampel_filter;
+FastRunningMedian<200> slow_filter_1;
+FastRunningMedian<10> older_value;
 
 // Kalman variables for filtering raw reading
 float varRaw = 0.006833;
@@ -40,19 +44,18 @@ float Xe = 0.0;
 
 void setup()
 {
+  //M5.Power.begin();
   // This code is from the M5StickC weighing example
   M5.begin();
-  M5.Lcd.setRotation(1);
+  //M5.Lcd.setRotation(1);
   M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
   M5.Lcd.setTextDatum(MC_DATUM);
   M5.Lcd.drawString("SCALE", 80, 0, 4);
-  Init_Hx711();
-  Get_Gross(); //clear the weight
+
+  scale.init();
+
   M5.Lcd.setTextColor(TFT_RED, TFT_BLACK);
   Serial.begin(115200);
-
-  pinMode(BUTTON_HOME, INPUT);
-  pinMode(BUTTON_PIN, INPUT);
 }
 
 int i = 0;
@@ -63,7 +66,7 @@ void loop()
   // or, at all, really.
   //M5.update();
 
-  float raw_weight = Get_Weight(1);
+  float raw_weight = scale.getGram(1);
 
   // Kalman filtering
   Pc = P + varProcess;
@@ -74,20 +77,26 @@ void loop()
   Xe = G * (raw_weight - Zp) + Xp;
   float kalman_filtered = Xe;
 
-  // this is for adjusting the scale factor, only useful while developing.
-  if (digitalRead(BUTTON_HOME) == LOW)
-  {
-    current_scale -= 0.5;
-  }
-  if (digitalRead(BUTTON_PIN) == LOW)
-  {
-    current_scale += 0.5;
-  }
-  adjust_scale(current_scale);
+  scale.setScale(current_scale);
 
   // hampel filtering
   hampel_filter.addValue(raw_weight);
+
+  slow_filter_1.addValue(raw_weight);
+
   float hampel_filtered = hampel_filter.getMedian();
+  float slow_filtered_1 = slow_filter_1.getMedian();
+
+  older_value.addValue(slow_filtered_1);
+
+  // auto-zeroing
+  float value_from_olde = older_value.getOldestValue();
+
+  if(abs(slow_filtered_1 - value_from_olde) < auto_zero_eps)
+  {
+    // re-tare scale
+    //adjust_tare(slow_filtered_1 - value_from_olde);
+  }
 
   // kalman_filtered is the kalman-filtered weight, hampel_filtered is the hampel-filtered one.
   // Turns out that they both have their strengths, and also weaknesses:
@@ -115,11 +124,9 @@ void loop()
 
 
   // For displaying a graph in the console logger
-  Serial.printf("filtered=%8.2f,kalman=%8.2f,raw=%f\n", hampel_filtered, kalman_filtered, raw_weight);
+  Serial.printf("filtered=%8.2f,kalman=%8.2f,slow1=%8.3f,raw=%8.2f\n", hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight);
 
   M5.Lcd.setCursor(40, 30, 4);
   M5.Lcd.fillRect(0, 30, 160, 30, TFT_BLACK);
   M5.Lcd.printf("%.2f g", hampel_filtered);
-  M5.Lcd.fillRect(0, 70, 160, 10, TFT_BLACK);
-  M5.Lcd.fillRect(0, 70, hampel_filtered, 10, TFT_YELLOW);
 }

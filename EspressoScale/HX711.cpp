@@ -1,84 +1,86 @@
-// TODO: Re-write this library or use some other hx711 library, as I do not know what these
-// chinese characters mean (also the code is a bit sloppy)...
+/*
+ * hx711.cpp
+ *
+ *  Created on: Oct 31, 2012
+ *      Author: agu
+ */
 
-#include "HX711.h"
+#include "hx711.h"
 
-unsigned long Weight_Gross = 0;
-float hx_711_scale = 1;
-
-//****************************************************
-//初始化HX711
-//****************************************************
-void Init_Hx711()
+HX711::HX711(uint8_t pin_dout, uint8_t pin_slk) :
+		_pin_dout(pin_dout), _pin_slk(pin_slk)
 {
-	pinMode(HX711_SCK, OUTPUT);
-	pinMode(HX711_DT, INPUT);
 }
 
-//****************************************************
-//获取毛皮重量
-//****************************************************
-void Get_Gross()
+HX711::~HX711()
 {
-	//Weight_Maopi = HX711_Read();
-	Weight_Gross = HX711_Read();
 }
 
-void adjust_scale(float scale)
+void HX711::init()
 {
-	hx_711_scale = scale;
+	pinMode(_pin_slk, OUTPUT);
+	pinMode(_pin_dout, INPUT);
+
+	digitalWrite(_pin_slk, HIGH);
+	delayMicroseconds(100);
+	digitalWrite(_pin_slk, LOW);
+
+	averageValue();
+	this->setOffset(averageValue());
+	this->setScale(1);
 }
 
-//****************************************************
-//称重
-//****************************************************
-float Get_Weight(int times)
+long HX711::averageValue(byte times)
 {
-	long weight_sum = 0;
-	float weight_net = 0;
-
-	for (int i = 0; i < times; i++)
+	long sum = 0;
+	for (byte i = 0; i < times; i++)
 	{
-		weight_sum += HX711_Read() - Weight_Gross;
+		sum += getValue();
 	}
 
-	weight_net = ((float)(weight_sum)) / (hx_711_scale * times);
-	return weight_net;
+	return sum / times;
 }
 
-//****************************************************
-//读取HX711
-//****************************************************
-unsigned long HX711_Read(void) //增益128
+long HX711::getValue()
 {
-	unsigned long count;
-	unsigned char i;
-	bool Flag = 0;
+	byte data[3];
 
-	digitalWrite(HX711_DT, HIGH);
-	delayMicroseconds(1);
-
-	digitalWrite(HX711_SCK, LOW);
-	delayMicroseconds(1);
-
-	count = 0;
-	while (digitalRead(HX711_DT))
+	while (digitalRead(_pin_dout))
 		;
-	for (i = 0; i < 24; i++)
-	{
-		digitalWrite(HX711_SCK, HIGH);
-		delayMicroseconds(1);
-		count = count << 1;
-		digitalWrite(HX711_SCK, LOW);
-		delayMicroseconds(1);
-		if (digitalRead(HX711_DT))
-			count++;
-	}
-	digitalWrite(HX711_SCK, HIGH);
-	count ^= 0x800000;
-	delayMicroseconds(1);
-	digitalWrite(HX711_SCK, LOW);
-	delayMicroseconds(1);
 
-	return (count);
+	for (byte j = 0; j < 3; j++)
+	{
+		for (byte i = 0; i < 8; i++)
+		{
+			digitalWrite(_pin_slk, HIGH);
+			bitWrite(data[2 - j], 7 - i, digitalRead(_pin_dout));
+			digitalWrite(_pin_slk, LOW);
+		}
+	}
+
+	digitalWrite(_pin_slk, HIGH);
+	digitalWrite(_pin_slk, LOW);
+
+	return ((long) data[2] << 16) | ((long) data[1] << 8) | (long) data[0];
+}
+
+void HX711::tare(byte times)
+{
+	setOffset(averageValue(times));
+}
+
+void HX711::setOffset(long offset)
+{
+	_offset = offset;
+}
+
+void HX711::setScale(float scale)
+{
+	_scale = scale;
+}
+
+float HX711::getGram(byte times)
+{
+	long val = (averageValue(times) - _offset);
+	return (float) val / _scale;
 }
