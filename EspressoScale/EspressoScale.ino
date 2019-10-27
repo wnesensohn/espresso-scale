@@ -71,9 +71,14 @@ unsigned long shot_end_millis = 0;
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
 float shot_end_thres = 1.0;
 
+
+int8_t battery_level = 0;
+
 void setup()
 {
   //M5.Power.begin();
+  battery_level = M5.Power.getBatteryLevel();
+
   // This code is from the M5StickC weighing example
   M5.begin();
   Wire.begin();
@@ -95,13 +100,9 @@ int i = 0;
 
 void loop()
 {
-  // doesn't need to be done in a loop...
-  // or, at all, really.
-  //M5.update();
+  M5.update();
 
-  //float raw_weight = scale.getGram(1);
-  float raw_weight = 19;
-
+  float raw_weight = scale.getGram(1);
 
   // Kalman filtering
   Pc = P + varProcess;
@@ -188,5 +189,5 @@ void loop()
 
   M5.Lcd.setCursor(40, 30, 4);
   M5.Lcd.fillRect(0, 30, 320, 30, TFT_BLACK);
-  M5.Lcd.printf("%.2f g t: %d b: %d c: %d", hampel_filtered, touchRead(2), M5.Power.getBatteryLevel(), M5.Power.isCharging());
+  M5.Lcd.printf("%.2f g t: %d b: %d", hampel_filtered, touchRead(2), battery_level);
 }
