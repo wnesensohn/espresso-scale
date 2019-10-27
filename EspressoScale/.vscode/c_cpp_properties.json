@@ -5,7 +5,9 @@
             "includePath": [
                 "C:\\Users\\wnesensohn\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\**",
                 "C:\\Users\\wnesensohn\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.4\\**",
-                "C:\\Users\\wnesensohn\\Documents\\Arduino\\libraries\\M5Stack\\**"
+                "C:\\Users\\wnesensohn\\Documents\\Arduino\\libraries\\M5Stack\\**",
+                "C:\\Users\\willi\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.4\\**",
+                "C:\\Users\\willi\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\**"
             ],
             "forcedInclude": [],
             "intelliSenseMode": "msvc-x64",
@@ -14,7 +16,26 @@
             "cppStandard": "c++17"
         },
         {
-            "name": "Arduino",
+            "name": "Arduino_SB",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/Users/willi/AppData/Local/Arduino15/packages/esp32/tools/**",
+                "C:/Users/willi/AppData/Local/Arduino15/packages/esp32/hardware/esp32/1.0.4/**",
+                "C:/Users/willi/Documents/Arduino/libraries/M5Stack/src/**"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "windowsSdkVersion": "10.0.17763.0",
+            "compilerPath": "C:/Users/willi/AppData/Local/Arduino15/packages/esp32/tools/xtensa-esp32-elf-gcc/1.22.0-80-g6c4433a-5.2.0/bin/xtensa-esp32-elf-gcc.exe",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-x86"
+        },
+        {
+            "name": "Arduino_LL",
             "includePath": [
                 "${workspaceFolder}/**"
             ],

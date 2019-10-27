@@ -49,6 +49,18 @@ public:
     }
   };
 
+  // clear the filter, setting all values to the supplied value
+  void clear(float value)
+  {
+    uint8_t i = _window_size;
+    while(i > 0)
+    {
+      i--;
+      _inbuffer[i] = value;
+      _sortbuffer[i] = value;
+    }
+  }
+
   float getMedian()
   {
     // buffers are always sorted.
