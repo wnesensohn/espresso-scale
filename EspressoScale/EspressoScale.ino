@@ -73,9 +73,11 @@ unsigned long shot_start_millis = 0;
 unsigned long shot_end_millis = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 5.0;
+float shot_end_thres = 0.5;
+// [s] - the shot lasts at least that long, don't end it before!
+float shot_min_time = 10;
 
-unsigned int shot_end_cnt_thres = 20;
+unsigned int shot_end_cnt_thres = 15;
 unsigned int shot_end_cnt;
 
 int8_t battery_level = 0;
@@ -225,30 +227,40 @@ void loop()
 
   if(shot_start_cnt >= shot_start_cnt_thres)
   {
-    shot_start_cnt = 0;
-    shot_running = 1;
-    shot_start_millis = millis();
+    if(shot_end_millis == 0 || (millis() - shot_end_millis) > 10000)
+    {
+      shot_start_cnt = 0;
+      shot_running = 1;
+      shot_start_millis = millis();
+    }
   }
 
-  if(abs(shot_end_filter.getMedian() - shot_detection_current) < shot_end_thres && shot_running)
+  static unsigned int shot_end_real = 0;
+
+  if((abs(shot_end_filter.getMedian() - shot_detection_current) < shot_end_thres) && shot_running && 
+    ((millis() - shot_start_millis) > shot_min_time))
   {
     shot_end_cnt++;
   }
   else
   {
+    shot_end_real = millis();
     shot_end_cnt = 0;
   }
+
+  static unsigned long shot_time = 0;
 
   if(shot_end_cnt >= shot_end_cnt_thres)
   {
     shot_end_cnt = 0;
-    shot_end_millis = millis();
     shot_running = 0;
+    shot_end_millis = shot_end_real;
+    shot_time = shot_end_millis - shot_start_millis;
   }
 
   // debugging & tweaking
-  Serial.printf("filtered=%8.2f,kalman=%8.2f,slow1=%8.3f,raw=%8.2f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_millis=%ld\n", 
-  hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_millis);
+  Serial.printf("filtered=%f,kalman=%f,slow1=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld\n", 
+  hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time);
 
   float filtered_display_fast = round(20.0 * hampel_filtered) / 20.0;
   float filtered_display_med = round(20.0 * display_lp) / 20.0;
