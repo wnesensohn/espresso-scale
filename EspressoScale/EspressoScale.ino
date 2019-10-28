@@ -36,22 +36,26 @@ float auto_zero_eps = 0.005;
 // the slow filter as it will settle faster that way.
 // This should only affect the static mode, and as such this threshold can be much lower than the difference
 // you'd expect when pouring a shot.
-float static_reset_thres = 4.0;
+float static_reset_thres = 0.4;
 
 // [g] shot-start-threshold-min - uses dynamic, kalman-filtered value for determing whether a shot has started
 // depends on the scale being zeroed
-float shot_start_thres_min = 0.1;
-float shot_start_thres_max = 2.0;
+float shot_start_thres_min = 0.2;
+float shot_start_thres_max = 100.0;
 
 // [1] if that many samples lie between shot_start_thres_min and shot_start_thres_max, we assume the shot has started
-unsigned int shot_start_cnt_thres = 4;
+unsigned int shot_start_cnt_thres = 5;
 unsigned int shot_start_cnt;
 uint8_t shot_running = 0;
 
+FastRunningMedian<5> outlier_rejection_filter;
 FastRunningMedian<16> hampel_filter;
 FastRunningMedian<100> static_value_filter;
+FastRunningMedian<64> display_filter;
 FastRunningMedian<10> older_value;
-FastRunningMedian<5> quick_settle_filter; // this may need to be adjusted down to 4 or 3 to improve settling time
+FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
+FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
+FastRunningMedian<13> shot_start_filter; // this may need to be adjusted up to make shot-start detection more reliable
 FastRunningMedian<13> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
 // Kalman variables for filtering raw reading
@@ -69,40 +73,62 @@ unsigned long shot_start_millis = 0;
 unsigned long shot_end_millis = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 1.0;
+float shot_end_thres = 5.0;
 
+unsigned int shot_end_cnt_thres = 20;
+unsigned int shot_end_cnt;
 
 int8_t battery_level = 0;
 
 void setup()
 {
   //M5.Power.begin();
-  battery_level = M5.Power.getBatteryLevel();
+  //battery_level = M5.Power.getBatteryLevel();
+  battery_level = 0;
 
-  // This code is from the M5StickC weighing example
   M5.begin();
-  Wire.begin();
-  //M5.Lcd.setRotation(1);
+  //Wire.begin();
   M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Lcd.setTextDatum(MC_DATUM);
-  M5.Lcd.drawString("SCALE", 80, 0, 4);
+  M5.Lcd.printf("battery: %d", battery_level);
+  //M5.Lcd.drawString("SCALE", 80, 0, 4);
 
-  //scale.init();
+  scale.init();
+
+  M5.Lcd.printf("SCALE INITIALIZED");
 
   M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   Serial.begin(115200);
 
-  btStop();
-  WiFi.mode(WIFI_OFF);
+  //btStop();
+  //WiFi.mode(WIFI_OFF);
 }
 
 int i = 0;
+
+float previous_raw = 0;
+float display_lp = 0;
+
+int fast_settle = 0;
 
 void loop()
 {
   M5.update();
 
   float raw_weight = scale.getGram(1);
+
+  // crude outlier rejection - we can't measure more than 1000g anyway
+  if(abs(raw_weight - previous_raw) > 1000)
+  {
+    raw_weight = previous_raw;
+  }
+  previous_raw = raw_weight;
+
+  outlier_rejection_filter.addValue(raw_weight);
+  float outlier_rejected_val = outlier_rejection_filter.getMedian();
+
+  // make outlier-rejected val the base of everything down below, because we don't want these pesky spikes
+  raw_weight = outlier_rejected_val;
 
   // Kalman filtering
   Pc = P + varProcess;
@@ -117,19 +143,45 @@ void loop()
 
   hampel_filter.addValue(raw_weight);
   static_value_filter.addValue(raw_weight);
-  quick_settle_filter.addValue(raw_weight);
-  shot_end_filter.addValue(kalman_filtered); // we use kalman-filter for all dynamic purposes
+  display_filter.addValue(raw_weight);
+
+  quick_settle_filter_val.addValue(raw_weight);
+  quick_settle_filter_trig.addValue(raw_weight);
 
   // check whether we have a (relatively) recent dynamic value which is in stark contrast to the slow FastRunningMedian
-  float quick_settle_median = quick_settle_filter.getMedian();
+  float quick_settle_median = quick_settle_filter_trig.getMedian();
   if(abs(quick_settle_median - static_value_filter.getMedian()) > static_reset_thres)
   {
-    static_value_filter.clear(quick_settle_median);
-    hampel_filter.clear(quick_settle_median);
+    float quick_settle_median_val = quick_settle_filter_val.getMedian();
+    static_value_filter.clear(quick_settle_median_val);
+    display_filter.clear(quick_settle_median_val);
+    hampel_filter.clear(quick_settle_median_val);
+    fast_settle = 23;
   }
+
+  float display_lp_d = 0.98;
+  if(fast_settle > 0)
+  {
+    display_lp_d = 0.98/fast_settle;
+
+    if(display_lp_d < 0.1)
+    {
+      display_lp_d = 0;
+    }
+
+    fast_settle--;
+  }
+
+  display_lp = display_lp * display_lp_d + (raw_weight * (1.0 - display_lp_d));
 
   float hampel_filtered = hampel_filter.getMedian();
   float slow_filtered_1 = static_value_filter.getMedian();
+  float display_filtered = display_filter.getMedian();
+
+  // we use kalman-filter for all dynamic purposes, but for static ones, we use hampel_filtered
+  float shot_detection_current = hampel_filtered;
+  shot_start_filter.addValue(hampel_filtered);
+  shot_end_filter.addValue(hampel_filtered); 
 
   older_value.addValue(slow_filtered_1);
 
@@ -160,7 +212,8 @@ void loop()
 
   if(!shot_running)
   {
-    if(kalman_filtered > shot_start_thres_min && kalman_filtered < shot_start_thres_max)
+    float shot_start_filter_median = shot_start_filter.getMedian();
+    if(abs(shot_start_filter_median - shot_detection_current) > shot_start_thres_min && abs(shot_start_filter_median - shot_detection_current) < (shot_start_thres_max * (shot_start_cnt + 1)))
     {
       shot_start_cnt++;
     }
@@ -177,8 +230,18 @@ void loop()
     shot_start_millis = millis();
   }
 
-  if(abs(shot_end_filter.getMedian() - kalman_filtered) < shot_end_thres)
+  if(abs(shot_end_filter.getMedian() - shot_detection_current) < shot_end_thres && shot_running)
   {
+    shot_end_cnt++;
+  }
+  else
+  {
+    shot_end_cnt = 0;
+  }
+
+  if(shot_end_cnt >= shot_end_cnt_thres)
+  {
+    shot_end_cnt = 0;
     shot_end_millis = millis();
     shot_running = 0;
   }
@@ -187,7 +250,11 @@ void loop()
   Serial.printf("filtered=%8.2f,kalman=%8.2f,slow1=%8.3f,raw=%8.2f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_millis=%ld\n", 
   hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_millis);
 
+  float filtered_display_fast = round(20.0 * hampel_filtered) / 20.0;
+  float filtered_display_med = round(20.0 * display_lp) / 20.0;
+  float filtered_display_slow = round(20.0 * display_filtered) / 20.0;
+
   M5.Lcd.setCursor(40, 30, 4);
   M5.Lcd.fillRect(0, 30, 320, 30, TFT_BLACK);
-  M5.Lcd.printf("%.2f g t: %d b: %d", hampel_filtered, touchRead(2), battery_level);
+  M5.Lcd.printf("%6.2f %6.2f %6.2f", filtered_display_slow, filtered_display_med, filtered_display_fast, touchRead(2));
 }
