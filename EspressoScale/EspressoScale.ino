@@ -7,6 +7,8 @@
 #include <WiFi.h>
 #include "HX711.h"
 #include "HampelFilter.h"
+//#include <TFT_eSPI.h>
+//#include <SPI.h>
 
 HX711 scale(22, 21); // GROVE A
 //HX711 scale(36, 26); // GROVE B
@@ -41,7 +43,8 @@ float static_reset_thres = 0.4;
 // [g] shot-start-threshold-min - uses dynamic, kalman-filtered value for determing whether a shot has started
 // depends on the scale being zeroed
 float shot_start_thres_min = 0.2;
-float shot_start_thres_max = 100.0;
+float shot_start_thres_max = 10.0;
+float shot_start_max_incr = 0.5;
 
 // [1] if that many samples lie between shot_start_thres_min and shot_start_thres_max, we assume the shot has started
 unsigned int shot_start_cnt_thres = 5;
@@ -84,22 +87,27 @@ int8_t battery_level = 0;
 
 void setup()
 {
-  //M5.Power.begin();
-  //battery_level = M5.Power.getBatteryLevel();
-  battery_level = 0;
-
   M5.begin();
+  M5.Power.begin();
+
   //Wire.begin();
+  battery_level = M5.Power.getBatteryLevel();
+  Wire.~TwoWire();
+
+  //battery_level = 0;
+
+
   M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Lcd.setTextDatum(MC_DATUM);
   M5.Lcd.printf("battery: %d", battery_level);
+
   //M5.Lcd.drawString("SCALE", 80, 0, 4);
 
   scale.init();
 
-  M5.Lcd.printf("SCALE INITIALIZED");
+  //M5.Lcd.printf("SCALE INITIALIZED");
 
-  M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+  //M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   Serial.begin(115200);
 
   //btStop();
@@ -116,6 +124,11 @@ int fast_settle = 0;
 void loop()
 {
   M5.update();
+
+  if(M5.BtnC.wasPressed())
+  {
+    scale.tare(10);
+  }
 
   float raw_weight = scale.getGram(1);
 
@@ -215,7 +228,10 @@ void loop()
   if(!shot_running)
   {
     float shot_start_filter_median = shot_start_filter.getMedian();
-    if(abs(shot_start_filter_median - shot_detection_current) > shot_start_thres_min && abs(shot_start_filter_median - shot_detection_current) < (shot_start_thres_max * (shot_start_cnt + 1)))
+    if(
+      abs(shot_start_filter_median - shot_detection_current) > shot_start_thres_min && 
+      abs(shot_start_filter_median - shot_detection_current) < (shot_start_thres_max * (shot_start_cnt + 1)) &&
+      shot_start_filter_median < (shot_start_max_incr * (shot_start_cnt + 1)))
     {
       shot_start_cnt++;
     }
@@ -267,6 +283,15 @@ void loop()
   float filtered_display_slow = round(20.0 * display_filtered) / 20.0;
 
   M5.Lcd.setCursor(40, 30, 4);
-  M5.Lcd.fillRect(0, 30, 320, 30, TFT_BLACK);
+  M5.Lcd.fillRect(0, 30, 320, 100, TFT_BLACK);
   M5.Lcd.printf("%6.2f %6.2f %6.2f", filtered_display_slow, filtered_display_med, filtered_display_fast, touchRead(2));
+
+  M5.Lcd.setCursor(40, 60, 4);
+  if(shot_running){
+    M5.Lcd.printf("%5.1f", (millis() - shot_start_millis) / 1000.0);
+  }
+  else if(shot_time > 0){
+    M5.Lcd.printf("%5.1f", (shot_time) / 1000.0);
+  }
+
 }
