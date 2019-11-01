@@ -7,6 +7,7 @@
 #include <WiFi.h>
 #include "HX711.h"
 #include "HampelFilter.h"
+#include "FlowMeter.h"
 //#include <TFT_eSPI.h>
 //#include <SPI.h>
 
@@ -61,6 +62,9 @@ FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted do
 FastRunningMedian<13> shot_start_filter; // this may need to be adjusted up to make shot-start detection more reliable
 FastRunningMedian<13> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
+
+FlowMeter flow_meter;
+
 // Kalman variables for filtering raw reading
 float varRaw = 0.006833;
 float varProcess = 2e-4;
@@ -76,7 +80,7 @@ unsigned long shot_start_millis = 0;
 unsigned long shot_end_millis = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 0.5;
+float shot_end_thres = 0.2;
 // [s] - the shot lasts at least that long, don't end it before!
 float shot_min_time = 10;
 
@@ -92,6 +96,9 @@ void setup()
 
   //Wire.begin();
   battery_level = M5.Power.getBatteryLevel();
+  // I2C is wired on the same port as where we get our data from hx711. That's pretty unfortunate,
+  // but maybe we should just re-wire this. Anyhow, it's not a problem if we just destruct TwoWire
+  // here. It delays startup by a bit though (hx711 settling is still the worst part)
   Wire.~TwoWire();
 
   //battery_level = 0;
@@ -248,6 +255,7 @@ void loop()
       shot_start_cnt = 0;
       shot_running = 1;
       shot_start_millis = millis();
+      flow_meter.clear();
     }
   }
 
@@ -265,18 +273,22 @@ void loop()
   }
 
   static unsigned long shot_time = 0;
-
+  static float shot_end_weight = 0.0f;
+  
   if(shot_end_cnt >= shot_end_cnt_thres)
   {
     shot_end_cnt = 0;
     shot_running = 0;
     shot_end_millis = shot_end_real;
     shot_time = shot_end_millis - shot_start_millis;
+    shot_end_weight = raw_weight;
   }
 
+  flow_meter.addValue(millis(), raw_weight);
+
   // debugging & tweaking
-  Serial.printf("filtered=%f,kalman=%f,slow1=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld\n", 
-  hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time);
+  Serial.printf("filtered=%f,kalman=%f,slow1=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f\n", 
+  hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow());
 
   float filtered_display_fast = round(20.0 * hampel_filtered) / 20.0;
   float filtered_display_med = round(20.0 * display_lp) / 20.0;
@@ -288,10 +300,10 @@ void loop()
 
   M5.Lcd.setCursor(40, 60, 4);
   if(shot_running){
-    M5.Lcd.printf("%5.1f", (millis() - shot_start_millis) / 1000.0);
+    M5.Lcd.printf("%5.1f - %5.3f g/s", (millis() - shot_start_millis) / 1000.0, flow_meter.getCurrentFlow());
   }
   else if(shot_time > 0){
-    M5.Lcd.printf("%5.1f", (shot_time) / 1000.0);
+    M5.Lcd.printf("%5.1f - %5.3f g/s total", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
   }
 
 }

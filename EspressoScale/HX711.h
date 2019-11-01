@@ -10,7 +10,7 @@ public:
     void init();
 	virtual ~HX711();
 	long getValue();
-	long averageValue(byte times = 32);
+	long averageValue(byte times = 10);
 	void setOffset(long offset);
 	void setScale(float scale = 742.f);
     void tare(byte times = 32);
