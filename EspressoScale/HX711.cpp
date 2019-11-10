@@ -22,7 +22,7 @@ void HX711::init()
 	pinMode(_pin_dout, INPUT);
 
 	digitalWrite(_pin_slk, HIGH);
-	delayMicroseconds(100);
+	delayMicroseconds(200);
 	digitalWrite(_pin_slk, LOW);
 
 	averageValue();
@@ -48,17 +48,22 @@ long HX711::getValue()
 	while (digitalRead(_pin_dout))
 		;
 
+	delayMicroseconds(100);
+
 	for (byte j = 0; j < 3; j++)
 	{
 		for (byte i = 0; i < 8; i++)
 		{
 			digitalWrite(_pin_slk, HIGH);
+			delayMicroseconds(40);
 			bitWrite(data[2 - j], 7 - i, digitalRead(_pin_dout));
 			digitalWrite(_pin_slk, LOW);
+			delayMicroseconds(40);
 		}
 	}
 
 	digitalWrite(_pin_slk, HIGH);
+	delayMicroseconds(40);
 	digitalWrite(_pin_slk, LOW);
 
 	return ((long) data[2] << 16) | ((long) data[1] << 8) | (long) data[0];

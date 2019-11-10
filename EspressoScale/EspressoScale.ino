@@ -11,8 +11,8 @@
 //#include <TFT_eSPI.h>
 //#include <SPI.h>
 
-HX711 scale(22, 21); // GROVE A
-//HX711 scale(36, 26); // GROVE B
+//HX711 scale(22, 21); // GROVE A
+HX711 scale(36, 26); // GROVE B
 //HX711 scale(16, 17); // GROVE C
 
 // TODO (general): 
@@ -52,7 +52,7 @@ unsigned int shot_start_cnt_thres = 5;
 unsigned int shot_start_cnt;
 uint8_t shot_running = 0;
 
-FastRunningMedian<5> outlier_rejection_filter;
+FastRunningMedian<7> outlier_rejection_filter;
 FastRunningMedian<16> hampel_filter;
 FastRunningMedian<100> static_value_filter;
 FastRunningMedian<64> display_filter;
@@ -138,6 +138,7 @@ void loop()
   }
 
   float raw_weight = scale.getGram(1);
+  float very_raw_weight = raw_weight;
 
   // crude outlier rejection - we can't measure more than 1000g anyway
   if(abs(raw_weight - previous_raw) > 1000)
@@ -287,8 +288,8 @@ void loop()
   flow_meter.addValue(millis(), raw_weight);
 
   // debugging & tweaking
-  Serial.printf("filtered=%f,kalman=%f,slow1=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f\n", 
-  hampel_filtered, kalman_filtered, slow_filtered_1, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow());
+  Serial.printf("filtered=%f,kalman=%f,slow1=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f\n", 
+  hampel_filtered, kalman_filtered, slow_filtered_1, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow());
 
   float filtered_display_fast = round(20.0 * hampel_filtered) / 20.0;
   float filtered_display_med = round(20.0 * display_lp) / 20.0;
