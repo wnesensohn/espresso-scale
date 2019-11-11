@@ -39,11 +39,11 @@ float auto_zero_eps = 0.005;
 // the slow filter as it will settle faster that way.
 // This should only affect the static mode, and as such this threshold can be much lower than the difference
 // you'd expect when pouring a shot.
-float static_reset_thres = 0.4;
+float static_reset_thres = 0.7;
 
 // [g] shot-start-threshold-min - uses dynamic, kalman-filtered value for determing whether a shot has started
 // depends on the scale being zeroed
-float shot_start_thres_min = 0.2;
+float shot_start_thres_min = 0.7;
 float shot_start_thres_max = 10.0;
 float shot_start_max_incr = 0.5;
 
@@ -52,7 +52,7 @@ unsigned int shot_start_cnt_thres = 5;
 unsigned int shot_start_cnt;
 uint8_t shot_running = 0;
 
-FastRunningMedian<7> outlier_rejection_filter;
+FastRunningMedian<11> outlier_rejection_filter;
 FastRunningMedian<16> hampel_filter;
 FastRunningMedian<100> static_value_filter;
 FastRunningMedian<64> display_filter;
@@ -106,7 +106,7 @@ void setup()
 
   M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Lcd.setTextDatum(MC_DATUM);
-  M5.Lcd.printf("battery: %d", battery_level);
+  //M5.Lcd.printf("battery: %d", battery_level);
 
   //M5.Lcd.drawString("SCALE", 80, 0, 4);
 
@@ -182,10 +182,10 @@ void loop()
     fast_settle = 23;
   }
 
-  float display_lp_d = 0.98;
+  float display_lp_d = 0.99;
   if(fast_settle > 0)
   {
-    display_lp_d = 0.98/fast_settle;
+    display_lp_d = 0.99/fast_settle;
 
     if(display_lp_d < 0.1)
     {
@@ -288,8 +288,8 @@ void loop()
   flow_meter.addValue(millis(), raw_weight);
 
   // debugging & tweaking
-  Serial.printf("filtered=%f,kalman=%f,slow1=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f\n", 
-  hampel_filtered, kalman_filtered, slow_filtered_1, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow());
+  Serial.printf("filtered=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f\n", 
+  display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow());
 
   float filtered_display_fast = round(20.0 * hampel_filtered) / 20.0;
   float filtered_display_med = round(20.0 * display_lp) / 20.0;
@@ -297,7 +297,7 @@ void loop()
 
   M5.Lcd.setCursor(40, 30, 4);
   M5.Lcd.fillRect(0, 30, 320, 100, TFT_BLACK);
-  M5.Lcd.printf("%6.2f %6.2f %6.2f", filtered_display_slow, filtered_display_med, filtered_display_fast, touchRead(2));
+  M5.Lcd.printf("%6.2f %d", filtered_display_med, touchRead(2));
 
   M5.Lcd.setCursor(40, 60, 4);
   if(shot_running){

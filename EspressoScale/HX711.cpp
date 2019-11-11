@@ -48,22 +48,23 @@ long HX711::getValue()
 	while (digitalRead(_pin_dout))
 		;
 
-	delayMicroseconds(100);
+	delayMicroseconds(50);
 
 	for (byte j = 0; j < 3; j++)
 	{
 		for (byte i = 0; i < 8; i++)
 		{
 			digitalWrite(_pin_slk, HIGH);
-			delayMicroseconds(40);
-			bitWrite(data[2 - j], 7 - i, digitalRead(_pin_dout));
+			delayMicroseconds(2);
 			digitalWrite(_pin_slk, LOW);
-			delayMicroseconds(40);
+			delayMicroseconds(50);
+			bitWrite(data[2 - j], 7 - i, digitalRead(_pin_dout));
+			delayMicroseconds(50);
 		}
 	}
 
 	digitalWrite(_pin_slk, HIGH);
-	delayMicroseconds(40);
+	delayMicroseconds(2);
 	digitalWrite(_pin_slk, LOW);
 
 	return ((long) data[2] << 16) | ((long) data[1] << 8) | (long) data[0];
