@@ -75,6 +75,11 @@ void HX711::tare(byte times)
 	setOffset(averageValue(times));
 }
 
+void HX711::tareWithValue(float val)
+{
+	_offset = _offset + (val * _scale);
+}
+
 void HX711::setOffset(long offset)
 {
 	_offset = offset;

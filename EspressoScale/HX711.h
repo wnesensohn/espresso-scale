@@ -13,6 +13,7 @@ public:
 	long averageValue(byte times = 10);
 	void setOffset(long offset);
 	void setScale(float scale = 742.f);
+	void tareWithValue(float val);
     void tare(byte times = 32);
 	float getGram(byte times = 32);
 
