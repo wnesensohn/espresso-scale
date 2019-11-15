@@ -32,7 +32,7 @@ HX711 scale(36, 26); // GROVE B
 // X switch to M5Stack - done
 
 // TODO: Add a method to calibrate the scale by using a pre-defined weight
-float current_scale = 890.0/2;
+float current_scale = 890.0;
 
 // [g] - if the slow-filter-median differs from the dynamic-mode-switch-filter by that amount, we can
 // safely assume that the user has added some weight at once. This means that it's better to purge
@@ -52,7 +52,7 @@ unsigned int shot_start_cnt_thres = 6;
 unsigned int shot_start_cnt;
 uint8_t shot_running = 0;
 
-FastRunningMedian<11> outlier_rejection_filter;
+FastRunningMedian<6> outlier_rejection_filter;
 FastRunningMedian<16> hampel_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
@@ -63,7 +63,7 @@ FastRunningMedian<13> shot_end_filter; // this may need to be adjusted up to mak
 // non-compensated filters
 FastRunningMedian<32> auto_zero_filter_fast; // fast(er) auto-zero filter
 int auto_zero_distance = 5;
-float auto_zero_eps = 0.05;
+float auto_zero_eps = 0.07;
 
 FlowMeter flow_meter;
 
@@ -148,7 +148,7 @@ void loop()
   static float auto_zero_first = 0;
 
   static float auto_zero_flt = 0;
-  auto_zero_flt = (auto_zero_flt * 0.95) + (outlier_rejected_val * 0.05);
+  auto_zero_flt = (auto_zero_flt * 0.98) + (outlier_rejected_val * 0.02);
 
   if(++auto_zero_act == auto_zero_distance)
   {
@@ -161,13 +161,13 @@ void loop()
 
     if(auto_zero_abs < auto_zero_eps)
     {
-      Serial.printf("zeroed with %f\n",  auto_zero_diff);
-      auto_zero_offset = auto_zero_fast_median - auto_zero_first;
+      //Serial.printf("zeroed with %f\n",  auto_zero_diff);
+      //auto_zero_offset = auto_zero_fast_median - auto_zero_first;
     }
     else
     {
       auto_zero_first = auto_zero_fast_median;
-      Serial.printf("not auto zeroed with %f\n",  auto_zero_diff);
+      //Serial.printf("not auto zeroed with %f\n",  auto_zero_diff);
     }
 
     auto_zero_last = auto_zero_fast_median;
@@ -212,7 +212,7 @@ void loop()
     }
   }
 
-  float display_lp_d = 0.99;
+  double display_lp_d = 0.997;
   if(fast_settle > 0)
   {
     display_lp_d = 0.99/fast_settle;
@@ -289,11 +289,11 @@ void loop()
   flow_meter.addValue(ms, raw_weight);
 
   // debugging & tweaking
-  Serial.printf("filtered=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f,az=%f,az_l=%f\n", 
-  display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow(),
-  auto_zero_filter_fast.getMedian(),
-  auto_zero_last
-  );
+  //Serial.printf("filtered=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f,az=%f,az_l=%f\n", 
+  //display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow(),
+  //auto_zero_filter_fast.getMedian(), auto_zero_last);
+
+  Serial.printf("%f,%f,%f\n", very_raw_weight, raw_weight, display_lp);
 
 
   float filtered_display_med = round(20.0 * display_lp) / 20.0;
