@@ -306,10 +306,10 @@ void loop()
   M5.Lcd.setTextSize(2);
   if(shot_running){
     //M5.Lcd.printf("%5.1f - %5.3f g/s", (ms - shot_start_millis) / 1000.0, flow_meter.getCurrentFlow());
-    M5.Lcd.printf("%6.1f", (ms - shot_start_millis) / 1000.0);
+    M5.Lcd.printf("%5.1f", (ms - shot_start_millis) / 1000.0);
   }
   else if(shot_time > 0){
-    M5.Lcd.printf("%6.1f - %5.3f g/s total", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
+    M5.Lcd.printf("%5.1f - %3.1f g/s", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
   }
 
 
