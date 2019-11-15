@@ -24,21 +24,6 @@ void HX711::init()
 	digitalWrite(_pin_slk, HIGH);
 	delayMicroseconds(200);
 	digitalWrite(_pin_slk, LOW);
-
-	averageValue();
-	this->setOffset(averageValue());
-	this->setScale(1);
-}
-
-long HX711::averageValue(byte times)
-{
-	long sum = 0;
-	for (byte i = 0; i < times; i++)
-	{
-		sum += getValue();
-	}
-
-	return sum / times;
 }
 
 long HX711::getValue()
@@ -68,30 +53,4 @@ long HX711::getValue()
 	digitalWrite(_pin_slk, LOW);
 
 	return ((long) data[2] << 16) | ((long) data[1] << 8) | (long) data[0];
-}
-
-void HX711::tare(byte times)
-{
-	setOffset(averageValue(times));
-}
-
-void HX711::tareWithValue(float val)
-{
-	_offset = _offset + (val * _scale);
-}
-
-void HX711::setOffset(long offset)
-{
-	_offset = offset;
-}
-
-void HX711::setScale(float scale)
-{
-	_scale = scale;
-}
-
-float HX711::getGram(byte times)
-{
-	long val = (averageValue(times) - _offset);
-	return (float) val / _scale;
 }

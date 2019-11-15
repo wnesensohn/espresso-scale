@@ -50,7 +50,7 @@ public:
   };
 
   // clear the filter, setting all values to the supplied value
-  void clear(float value)
+  void clear(long value)
   {
     uint8_t i = _window_size;
     while(i > 0)
@@ -61,13 +61,13 @@ public:
     }
   }
 
-  float getMedian()
+  long getMedian()
   {
     // buffers are always sorted.
     return _sortbuffer[_median_ptr];
   }
 
-  float getOldestValue()
+  long getOldestValue()
   {
     uint8_t oldest_ptr = _buffer_ptr + 1;
     if(oldest_ptr == _window_size)
@@ -78,7 +78,7 @@ public:
     return _inbuffer[oldest_ptr];
   }
 
-  void addValue(float new_value)
+  void addValue(long new_value)
   {
     // comparision with 0 is fast, so we decrement _buffer_ptr
     if (_buffer_ptr == 0)
@@ -86,7 +86,7 @@ public:
 
     _buffer_ptr--;
 
-    float old_value = _inbuffer[_buffer_ptr]; // retrieve the old value to be replaced
+    long old_value = _inbuffer[_buffer_ptr]; // retrieve the old value to be replaced
     if (new_value == old_value)               // if the value is unchanged, do nothing
       return;
 
@@ -113,7 +113,7 @@ public:
         // bubble sort step
         if (_sortbuffer[p] > _sortbuffer[q])
         {
-          float tmp = _sortbuffer[p];
+          long tmp = _sortbuffer[p];
           _sortbuffer[p] = _sortbuffer[q];
           _sortbuffer[q] = tmp;
         }
@@ -131,7 +131,7 @@ public:
       {
         if (_sortbuffer[p] > _sortbuffer[q])
         {
-          float tmp = _sortbuffer[p];
+          long tmp = _sortbuffer[p];
           _sortbuffer[p] = _sortbuffer[q];
           _sortbuffer[q] = tmp;
         }
@@ -153,9 +153,9 @@ private:
   uint8_t _median_ptr;
 
   // cyclic buffer for incoming values
-  float _inbuffer[N];
+  long _inbuffer[N];
   // sorted buffer
-  float _sortbuffer[N];
+  long _sortbuffer[N];
 };
 
 #endif
