@@ -9,6 +9,8 @@
 #include "HampelFilter.h"
 #include "FlowMeter.h"
 #include <EEPROM.h>
+//#include "utility/In_eSPI.h"
+//#include "utility/Sprite.h"
 //#include <TFT_eSPI.h>
 //#include <SPI.h>
 
@@ -123,6 +125,8 @@ float getGramDiff(long raw)
   return raw / _scale_scale;
 }
 
+TFT_eSprite img = TFT_eSprite(&M5.Lcd);
+
 long previous_raw = 0;
 long display_lp = 0;
 
@@ -221,6 +225,19 @@ void loop()
 
   display_lp = display_lp * display_lp_d + (outlier_rejected_val * (1.0 - display_lp_d));
 
+  static float bean_weight = 0.0f;
+  if(M5.BtnB.wasReleased())
+  {
+    if(bean_weight != 0.0f)
+    {
+      bean_weight = 0.0f;
+    }
+    else
+    {
+      bean_weight = getGram(display_lp);
+    }
+  }
+
   long hampel_filtered = hampel_filter.getMedian();
 
   long shot_detection_current = hampel_filtered;
@@ -290,27 +307,61 @@ void loop()
   getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_cnt, shot_end_cnt);
 
   float filtered_display_med = round(10.0 * getGram(display_lp)) / 10.0;
-  if(filtered_display_med <= 0 && filtered_display_med > -0.1)
+  // no-one is interested in these small fluctuations when we really should display 0
+  // of course this is cheating, but it makes for a nicer display
+  if(filtered_display_med < 0.3 && filtered_display_med > -0.3)
   {
     filtered_display_med = 0.0f;
   }
 
-  M5.Lcd.setCursor(40, 30);
-  M5.Lcd.setTextSize(5);
+  float ratio = 0.0f;
+  if(bean_weight != 0.0f)
+  {
+    ratio = getGram(display_lp) / bean_weight;
+    ratio = round(10.0f * ratio) / 10.0f;
+    if(ratio < 0)
+    {
+      ratio = 0;
+    }
+  }
 
-  M5.Lcd.fillRect(0, 0, 320, 240, TFT_BLACK);
+  img.setColorDepth(1);
+  img.createSprite(320, 240);
+  img.fillSprite(TFT_BLACK);
+
+  img.setTextColor(TFT_CYAN);
+
+  img.setTextSize(5);
+  img.setCursor(10, 50);
+  img.printf("%6.1fg", filtered_display_med);
+
   //M5.Lcd.printf("%6.2f %d", filtered_display_med, touchRead(2));
-  M5.Lcd.printf("%6.2f", filtered_display_med);
+  if(bean_weight != 0.0f)
+  {
+    img.setCursor(10, 120);
+    img.printf("%6.1f/1", ratio);
+  }
 
-  M5.Lcd.setCursor(40, 180);
-  M5.Lcd.setTextSize(2);
+  img.setTextSize(2);
+
+  if(bean_weight != 0.0f)
+  {
+    img.setCursor(160, 5);
+    img.printf("%5.1fg dry", bean_weight);
+  }
+
+  img.setCursor(40, 215);
   if(shot_running){
     //M5.Lcd.printf("%5.1f - %5.3f g/s", (ms - shot_start_millis) / 1000.0, flow_meter.getCurrentFlow());
-    M5.Lcd.printf("%5.1f", (ms - shot_start_millis) / 1000.0);
+    img.printf("%5.1fs", (ms - shot_start_millis) / 1000.0);
   }
   else if(shot_time > 0){
-    M5.Lcd.printf("%5.1f - %3.1f g/s", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
+    img.printf("%5.1fs %3.1fg/s", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
   }
 
+  img.setBitmapColor(TFT_CYAN, TFT_BLACK);
+  img.pushSprite(0, 0);
+
+  img.deleteSprite();
 
 }
