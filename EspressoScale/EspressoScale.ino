@@ -5,7 +5,8 @@
 
 #include <M5Stack.h>
 //#include <WiFi.h>
-#include "HX711.h"
+//#include "HX711.h"
+#include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h"
 #include "HampelFilter.h"
 #include "FlowMeter.h"
 #include <EEPROM.h>
@@ -14,8 +15,10 @@
 //#include <TFT_eSPI.h>
 //#include <SPI.h>
 
+NAU7802 scale;
+
 //HX711 scale(22, 21); // GROVE A
-HX711 scale(36, 26); // GROVE B
+//HX711 scale(36, 26); // GROVE B
 //HX711 scale(16, 17); // GROVE C
 
 // TODO (general): 
@@ -103,7 +106,16 @@ void setup()
 
   M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Lcd.setTextDatum(TL_DATUM);
-  scale.init();
+
+  if (scale.begin() == false)
+  {
+    Serial.println("Scale not detected. Please check wiring. Freezing...");
+    while (1);
+  }
+  Serial.println("Scale detected!");
+  scale.setGain(NAU7802_GAIN_128);
+  //scale.setSampleRate(NAU7802_SPS_10);
+  scale.calibrateAFE();
 
   startup_time = millis();
   //btStop();
@@ -137,7 +149,14 @@ void loop()
   M5.update();
 
   unsigned long ms = millis();
-  long very_raw_weight = scale.getValue();
+
+  long very_raw_weight = 0;
+  if(scale.available() == true)
+  {
+    very_raw_weight = scale.getReading();
+    Serial.print("Reading: ");
+    Serial.println(very_raw_weight);
+  }
 
   // crude outlier rejection - we can't measure more than 1000g anyway
   if(abs(getGramDiff(very_raw_weight - previous_raw)) > 1000)
