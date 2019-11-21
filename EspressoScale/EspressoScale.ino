@@ -4,7 +4,7 @@
 // All code under GPL v2 (see LICENSE), except where other licenses apply.
 
 #include <M5Stack.h>
-//#include <WiFi.h>
+#include <WiFi.h>
 //#include "HX711.h"
 #include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h"
 #include "HampelFilter.h"
@@ -50,7 +50,7 @@ float shot_start_thres_min = 0.2;
 float shot_start_thres_max = 2.5;
 float shot_start_max_incr = 2.0;
 
-FastRunningMedian<6> outlier_rejection_filter;
+FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<16> hampel_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
@@ -85,17 +85,17 @@ size_t _eep_size = 10;
 int _eep_addr_scale = 0;
 
 float _scale_scale;
-long _scale_offset = 0;
 float _scale_tare = 0.0f;
 
 void setup()
 {
   M5.begin();
   M5.Power.begin();
-
+  btStop();
+  WiFi.mode(WIFI_OFF);
   Serial.begin(115200);
-
   EEPROM.begin(_eep_size);
+
   _scale_scale = EEPROM.readFloat(_eep_addr_scale);
   if(isnan(_scale_scale) || _scale_scale < 800 || _scale_scale > 1000){
     _scale_scale = 890.0f;
@@ -113,23 +113,18 @@ void setup()
     while (1);
   }
   Serial.println("Scale detected!");
-  scale.setGain(NAU7802_GAIN_128);
-  //scale.setSampleRate(NAU7802_SPS_10);
-  scale.calibrateAFE();
 
   startup_time = millis();
-  //btStop();
-  //WiFi.mode(WIFI_OFF);
 }
 
 float getGramUntared(long raw)
 {
-  return (raw - _scale_offset) / _scale_scale;
+  return raw;
 }
 
 float getGram(long raw)
 {
-  return ((raw - _scale_offset) / _scale_scale) - _scale_tare;
+  return ((raw - _scale_tare) / _scale_scale);
 }
 
 float getGramDiff(long raw)
@@ -139,7 +134,6 @@ float getGramDiff(long raw)
 
 TFT_eSprite img = TFT_eSprite(&M5.Lcd);
 
-long previous_raw = 0;
 long display_lp = 0;
 
 int fast_settle = 0;
@@ -150,23 +144,13 @@ void loop()
 
   unsigned long ms = millis();
 
-  long very_raw_weight = 0;
-  if(scale.available() == true)
-  {
-    very_raw_weight = scale.getReading();
-    Serial.print("Reading: ");
-    Serial.println(very_raw_weight);
-  }
+  static long very_raw_weight = 0;
+  while(scale.available() != true);
+  very_raw_weight = scale.getReading();
 
-  // crude outlier rejection - we can't measure more than 1000g anyway
-  if(abs(getGramDiff(very_raw_weight - previous_raw)) > 1000)
-  {
-    very_raw_weight = previous_raw;
-  }
-  previous_raw = very_raw_weight;
-
-  outlier_rejection_filter.addValue(very_raw_weight);
-  long outlier_rejected_val = outlier_rejection_filter.getMedian();
+  //outlier_rejection_filter.addValue(very_raw_weight);
+  //long outlier_rejected_val = outlier_rejection_filter.getMedian();
+  long outlier_rejected_val = very_raw_weight;
 
   hampel_filter.addValue(outlier_rejected_val);
   static_value_filter.addValue(outlier_rejected_val);
@@ -174,7 +158,6 @@ void loop()
   quick_settle_filter_val.addValue(outlier_rejected_val);
   quick_settle_filter_trig.addValue(outlier_rejected_val);
 
-  int tareMode = 20;
   static int scale_calibrated = 0;
 
   if(M5.BtnC.pressedFor(1500) && !scale_calibrated)
@@ -193,9 +176,10 @@ void loop()
     }
     float scale_calib = 10.0f * current_gram_tens;
 
-    _scale_scale = (display_lp - _scale_offset) / (scale_calib + _scale_tare);
+    _scale_scale = (display_lp - _scale_tare) / scale_calib;
     EEPROM.writeFloat(_eep_addr_scale, _scale_scale);
     EEPROM.commit();
+    Serial.printf("lp: %d, calib: %f, tare: %f\n", display_lp, scale_calib, _scale_tare);
     Serial.printf("scale calibrated, new scale factor: %f with calib weight %f\n", _scale_scale, scale_calib);
     Serial.printf("scale calibrated, new scale value: %f\n", getGram(display_lp));
 
@@ -226,19 +210,17 @@ void loop()
     static_value_filter.clear(quick_settle_median_val);
     hampel_filter.clear(quick_settle_median_val);
 
-    fast_settle = 23;
+    fast_settle = 25;
   }
 
-  double display_lp_d = 0.95;
+  double display_lp_d = 0.97;
   if(fast_settle > 0)
   {
-    display_lp_d = 0.95/fast_settle;
-
-    if(display_lp_d < 0.1)
+    display_lp_d = 0.6;
+    if(fast_settle < 5)
     {
-      display_lp_d = 0;
+      display_lp_d = 0.9;
     }
-
     fast_settle--;
   }
 
@@ -325,12 +307,12 @@ void loop()
   Serial.printf("%f,%f,%f,%d,%d,%d\n", 
   getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_cnt, shot_end_cnt);
 
-  float filtered_display_med = round(10.0 * getGram(display_lp)) / 10.0;
+  float filtered_display_med = round(20.0 * getGram(display_lp)) / 20.0;
   // no-one is interested in these small fluctuations when we really should display 0
   // of course this is cheating, but it makes for a nicer display
-  if(filtered_display_med < 0.3 && filtered_display_med > -0.3)
+  if(filtered_display_med < 0.05 && filtered_display_med > -0.05)
   {
-    filtered_display_med = 0.0f;
+    filtered_display_med = +0.0f;
   }
 
   float ratio = 0.0f;
@@ -338,9 +320,9 @@ void loop()
   {
     ratio = getGram(display_lp) / bean_weight;
     ratio = round(10.0f * ratio) / 10.0f;
-    if(ratio < 0)
+    if(ratio <= 0)
     {
-      ratio = 0;
+      ratio = +0;
     }
   }
 
@@ -352,7 +334,7 @@ void loop()
 
   img.setTextSize(5);
   img.setCursor(10, 50);
-  img.printf("%6.1fg", filtered_display_med);
+  img.printf("%7.2fg", filtered_display_med);
 
   //M5.Lcd.printf("%6.2f %d", filtered_display_med, touchRead(2));
   if(bean_weight != 0.0f)
@@ -366,7 +348,7 @@ void loop()
   if(bean_weight != 0.0f)
   {
     img.setCursor(160, 5);
-    img.printf("%5.1fg dry", bean_weight);
+    img.printf("%7.2fg dry", bean_weight);
   }
 
   img.setCursor(40, 215);
