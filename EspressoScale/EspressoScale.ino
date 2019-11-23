@@ -46,16 +46,15 @@ float static_reset_thres = 0.3;
 
 // [g] shot-start-threshold-min
 // depends on the scale being zeroed
-float shot_start_thres_min = 0.2;
-float shot_start_thres_max = 0.5;
-float shot_start_max_incr = 0.1;
+float shot_start_thres_min = 0.3;
+float shot_start_thres_max = 7.0;
+float shot_start_max_incr = 2.0;
 
 FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
 FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
-FastRunningMedian<11> shot_start_filter; // this may need to be adjusted up to make shot-start detection more reliable
-FastRunningMedian<11> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<19> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
 FlowMeter flow_meter;
 
@@ -64,7 +63,7 @@ unsigned long shot_start_millis = 0;
 unsigned long shot_end_millis = 0;
 
 // [1] if that many samples lie between shot_start_thres_min and shot_start_thres_max, we assume the shot has started
-unsigned int shot_start_cnt_thres = 8;
+unsigned int shot_start_cnt_thres = 40;
 unsigned int shot_start_cnt;
 unsigned long shot_time = 0;
 float shot_end_weight = 0.0f;
@@ -72,11 +71,12 @@ float shot_end_weight = 0.0f;
 uint8_t shot_running = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 0.3;
+float shot_end_thres = 0.30;
 // [s] - the shot lasts at least that long, don't end it before!
-float shot_min_time = 10;
+long shot_min_time = 10000;
+long shot_min_time_disp = 5000;
 
-unsigned int shot_end_cnt_thres = 30;
+unsigned int shot_end_cnt_thres = 40;
 unsigned int shot_end_cnt;
 
 int8_t battery_level = 0;
@@ -192,16 +192,29 @@ void loop()
     scale_calibrated = 1;
   }
 
+  static long significant_change_detect = 0;
+  static long significant_change_millis = 0;
+  if(abs(getGramDiff(significant_change_detect - display_lp)) > 0.5)
+  {
+    significant_change_detect = display_lp;
+    significant_change_millis = ms;
+  }
+  else
+  {
+    if((ms - significant_change_millis) > (5 * 60 * 1000))
+    {
+      // 5 minutes no activity - deep sleep!
+      scale.powerDown();
+      M5.Power.deepSleep(0);
+    }
+  }
+  
+
   if(M5.BtnC.wasReleased())
   {
     if(scale_calibrated)
     {
       scale_calibrated = 0;
-    }
-    else 
-    {
-      // shutdown
-      M5.Power.deepSleep(60000000);
     }
   }
 
@@ -216,6 +229,7 @@ void loop()
       shot_end_weight = 0;
       shot_time = 0;
       flow_meter.clear();
+      shot_end_millis = 0;
   }
 
   long static_median = static_value_filter.getMedian();
@@ -266,46 +280,62 @@ void loop()
   }
 
   long shot_detection_current = display_lp;
-  shot_start_filter.addValue(shot_detection_current);
   shot_end_filter.addValue(shot_detection_current); 
+
+  static long shot_start_max = 0;
+  static long shot_start_last = 0;
+
+  float shot_start_diff = getGramDiff(shot_detection_current - shot_start_last);
 
   if(!shot_running)
   {
-    long shot_start_filter_median = shot_start_filter.getMedian();
     if(
-      getGramDiff(shot_detection_current - shot_start_filter_median) > shot_start_thres_min && 
-      getGram(shot_start_filter_median) < (shot_start_thres_max + (shot_start_max_incr * (shot_start_cnt + 1))))
+      getGram(shot_detection_current) > shot_start_thres_min &&
+      getGram(shot_detection_current) < shot_start_thres_max &&
+      shot_start_diff <= shot_start_max_incr
+      )
     {
       shot_start_cnt++;
     }
     else
     {
+      shot_start_millis = ms;
       shot_start_cnt = 0;
+      shot_start_max = 0;
     }
+
+    shot_start_last = shot_detection_current;
   }
 
-  if(shot_start_cnt >= shot_start_cnt_thres)
+  if(shot_start_cnt >= shot_start_cnt_thres &&
+    shot_end_millis == 0)
   {
-    if(shot_end_millis == 0 || (ms - shot_end_millis) > 10000)
-    {
-      shot_start_cnt = 0;
-      shot_running = 1;
-      shot_start_millis = ms;
-      flow_meter.clear();
-    }
+    shot_start_cnt = 0;
+    shot_running = 1;
+    flow_meter.clear();
   }
 
   static unsigned int shot_end_real = 0;
+  static bool shot_invalid = false;
 
-  if((abs(getGramDiff(shot_end_filter.getMedian() - shot_detection_current)) < shot_end_thres) && shot_running && 
-    ((ms - shot_start_millis) > shot_min_time))
+  if((abs(getGramDiff(shot_end_filter.getMedian() - shot_detection_current)) < shot_end_thres) && 
+    shot_running)
   {
-    shot_end_cnt++;
+    if((ms - shot_start_millis) > shot_min_time)
+    {
+      shot_end_cnt++;
+    }
+    else
+    {
+      shot_invalid = true;
+      shot_end_cnt++;
+    }
   }
   else
   {
     shot_end_real = ms;
     shot_end_cnt = 0;
+    shot_invalid = false;
   }
 
   
@@ -313,9 +343,19 @@ void loop()
   {
     shot_end_cnt = 0;
     shot_running = 0;
-    shot_end_millis = shot_end_real;
-    shot_time = shot_end_millis - shot_start_millis;
-    shot_end_weight = getGram(outlier_rejected_val);
+
+    if(shot_invalid)
+    {
+      shot_end_millis = 0;
+      shot_time = 0;
+      shot_end_weight = 0;
+    }
+    else
+    {
+      shot_end_millis = shot_end_real;
+      shot_time = shot_end_millis - shot_start_millis;
+      shot_end_weight = getGram(outlier_rejected_val);
+    }
   }
 
   flow_meter.addValue(ms, getGram(outlier_rejected_val));
@@ -325,8 +365,8 @@ void loop()
   //display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow(),
   //auto_zero_filter_fast.getMedian(), auto_zero_last);
 
-  Serial.printf("%f,%f,%f,%d,%d,%d\n", 
-  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_cnt, shot_end_cnt);
+  Serial.printf("%f,%f,%f,%d,%f,%d,%d\n", 
+  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt);
 
   float filtered_display_med = round(20.0 * getGram(display_lp)) / 20.0;
   // no-one is interested in these small fluctuations when we really should display 0
@@ -380,8 +420,7 @@ void loop()
   }
 
   img.setCursor(40, 180);
-  if(shot_running){
-    //M5.Lcd.printf("%5.1f - %5.3f g/s", (ms - shot_start_millis) / 1000.0, flow_meter.getCurrentFlow());
+  if(shot_running && (ms - shot_start_millis) >= shot_min_time_disp){
     img.printf("%5.1fs", (ms - shot_start_millis) / 1000.0);
   }
   else if(shot_time > 0){
@@ -389,21 +428,22 @@ void loop()
   }
 
   img.setTextSize(1);
-  img.setCursor(30, 230);
+  img.setCursor(29, 227);
   img.printf("Tare & Reset");
-  img.setCursor(140, 230);
+  img.setCursor(139, 227);
   img.printf("Set Dry");
-  img.setCursor(215, 230);
-  img.printf("Shutdown / Cal");
+  img.setCursor(221, 227);
+  img.printf("Calibration");
+
 
   img.setCursor(5, 5);
   if(isCharging)
   {
-    img.printf("Charging: %d%", battery_level);
+    img.printf("Charging: %d%%", battery_level);
   }
   else
   {
-    img.printf(" Battery: %d%", battery_level);
+    img.printf(" Battery: %d%%", battery_level);
   }
 
   img.setBitmapColor(TFT_CYAN, TFT_BLACK);
