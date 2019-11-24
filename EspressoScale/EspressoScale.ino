@@ -198,15 +198,13 @@ void loop()
   {
     significant_change_detect = display_lp;
     significant_change_millis = ms;
+    Serial.printf("significant change detected\n");
   }
-  else
+  else if((ms - significant_change_millis) > (15 * 60 * 1000))
   {
-    if((ms - significant_change_millis) > (5 * 60 * 1000))
-    {
-      // 5 minutes no activity - deep sleep!
-      scale.powerDown();
-      M5.Power.deepSleep(0);
-    }
+    // 15 minutes no activity - deep sleep!
+    scale.powerDown();
+    M5.Power.deepSleep(0);
   }
   
 
@@ -245,13 +243,13 @@ void loop()
     fast_settle = 20; // about 1 second
   }
 
-  double display_lp_d = 0.97;
+  double display_lp_d = 0.98;
   if(fast_settle > 0)
   {
     display_lp_d = 0;
-    if(fast_settle < 15)
+    if(fast_settle < 16)
     {
-      display_lp_d = 0.6;
+      display_lp_d = 0.7;
     }
     if(fast_settle < 10)
     {
@@ -408,7 +406,7 @@ void loop()
   if(bean_weight != 0.0f)
   {
     img.setCursor(10, 120);
-    img.printf("%6.1f/1", ratio);
+    img.printf("1:%6.1f", ratio);
   }
 
   img.setTextSize(2);
