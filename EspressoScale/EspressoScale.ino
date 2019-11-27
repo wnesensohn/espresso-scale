@@ -54,7 +54,9 @@ FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
 FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
-FastRunningMedian<19> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<23> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
+
+FastRunningMedian<9> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
 
 FlowMeter flow_meter;
 
@@ -71,7 +73,7 @@ float shot_end_weight = 0.0f;
 uint8_t shot_running = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 0.30;
+float shot_end_thres = 0.20;
 // [s] - the shot lasts at least that long, don't end it before!
 long shot_min_time = 10000;
 long shot_min_time_disp = 5000;
@@ -88,6 +90,8 @@ int _eep_addr_scale = 0;
 
 float _scale_scale;
 float _scale_tare = 0.0f;
+
+uint16_t touch_base = 0;
 
 void setup()
 {
@@ -108,6 +112,10 @@ void setup()
   digitalWrite(TFT_BL, HIGH);
   pinMode(TFT_BL, OUTPUT);
 
+
+  pinMode(2, INPUT);
+  pinMode(12, INPUT);
+
   M5.Lcd.setTextColor(TFT_CYAN, TFT_BLACK);
   M5.Lcd.setTextDatum(TL_DATUM);
 
@@ -119,6 +127,14 @@ void setup()
   Serial.println("Scale detected!");
 
   startup_time = millis();
+  
+  touchSetCycles(0xA000, 0x6000);
+  pre_infusion_timer.clear(100);
+
+  for(int i = 0; i < 9; i++)
+  {
+    touch_base = max(touchRead(12), touch_base);
+  }
 }
 
 float getGramUntared(long raw)
@@ -150,6 +166,24 @@ void loop()
   bool isCharging = M5.Power.isCharging();
 
   unsigned long ms = millis();
+  pre_infusion_timer.addValue(touchRead(12));
+
+  static long pre_infusion_start = 0;
+  static bool pre_infusion_freeze = false;
+  long pre_infusion_time = 0;
+
+  long pre_infusion_val = pre_infusion_timer.getMedian();
+
+  if((touch_base - pre_infusion_val) > 4 && !pre_infusion_freeze)
+  {
+    pre_infusion_time = ms - pre_infusion_start;
+  }
+  else if((touch_base - pre_infusion_val) <= 4)
+  {
+    pre_infusion_time = 0;
+    pre_infusion_start = ms;
+    pre_infusion_freeze = false;
+  }
 
   static long very_raw_weight = 0;
   while(scale.available() != true);
@@ -311,6 +345,7 @@ void loop()
     shot_start_cnt = 0;
     shot_running = 1;
     flow_meter.clear();
+    pre_infusion_freeze = true;
   }
 
   static unsigned int shot_end_real = 0;
@@ -363,8 +398,8 @@ void loop()
   //display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow(),
   //auto_zero_filter_fast.getMedian(), auto_zero_last);
 
-  Serial.printf("%f,%f,%f,%d,%f,%d,%d\n", 
-  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt);
+  Serial.printf("%f,%f,%f,%d,%f,%d,%d,%d\n", 
+  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt, pre_infusion_val);
 
   float filtered_display_med = round(20.0 * getGram(display_lp)) / 20.0;
   // no-one is interested in these small fluctuations when we really should display 0
@@ -398,15 +433,21 @@ void loop()
 
   img.setTextColor(TFT_CYAN);
 
-  img.setTextSize(5);
-  img.setCursor(10, 50);
+  img.setTextSize(4);
+  img.setCursor(10, 40);
   img.printf("%7.2fg", filtered_display_med);
 
   //M5.Lcd.printf("%6.2f %d", filtered_display_med, touchRead(2));
   if(bean_weight != 0.0f)
   {
-    img.setCursor(10, 120);
-    img.printf("1:%6.1f", ratio);
+    img.setCursor(10, 90);
+    img.printf("%7.2fg/g", ratio);
+  }
+
+  if(pre_infusion_time != 0)
+  {
+    img.setCursor(10, 140);
+    img.printf(" %6.1fs PI", pre_infusion_time / 1000.0f);
   }
 
   img.setTextSize(2);
@@ -416,6 +457,7 @@ void loop()
     img.setCursor(160, 5);
     img.printf("%7.2fg dry", bean_weight);
   }
+
 
   img.setCursor(40, 180);
   if(shot_running && (ms - shot_start_millis) >= shot_min_time_disp){
@@ -434,7 +476,7 @@ void loop()
   img.printf("Calibration");
 
 
-  img.setCursor(5, 5);
+  img.setCursor(5, 3);
   if(isCharging)
   {
     img.printf("Charging: %d%%", battery_level);
@@ -443,6 +485,9 @@ void loop()
   {
     img.printf(" Battery: %d%%", battery_level);
   }
+
+  img.setCursor(5, 15);
+  img.printf("   Touch: %d", pre_infusion_val);
 
   img.setBitmapColor(TFT_CYAN, TFT_BLACK);
   img.pushSprite(0, 0);
