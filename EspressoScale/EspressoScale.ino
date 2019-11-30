@@ -42,13 +42,13 @@ NAU7802 scale;
 // the slow filter as it will settle faster that way.
 // This should only affect the static mode, and as such this threshold can be much lower than the difference
 // you'd expect when pouring a shot.
-float static_reset_thres = 0.3;
+float static_reset_thres = 0.10;
 
 // [g] shot-start-threshold-min
 // depends on the scale being zeroed
 float shot_start_thres_min = 0.3;
-float shot_start_thres_max = 7.0;
-float shot_start_max_incr = 2.0;
+float shot_start_thres_max = 6.0;
+float shot_start_max_incr = 1.0;
 
 FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
@@ -56,7 +56,8 @@ FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted d
 FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
 FastRunningMedian<23> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
-FastRunningMedian<9> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<31> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to make shot-end detection more reliable
 
 FlowMeter flow_meter;
 
@@ -66,6 +67,7 @@ unsigned long shot_end_millis = 0;
 
 // [1] if that many samples lie between shot_start_thres_min and shot_start_thres_max, we assume the shot has started
 unsigned int shot_start_cnt_thres = 40;
+unsigned int shot_start_cnt_disp_thres = 5;
 unsigned int shot_start_cnt;
 unsigned long shot_time = 0;
 float shot_end_weight = 0.0f;
@@ -128,13 +130,7 @@ void setup()
 
   startup_time = millis();
   
-  touchSetCycles(0xA000, 0x6000);
-  pre_infusion_timer.clear(100);
-
-  for(int i = 0; i < 9; i++)
-  {
-    touch_base = max(touchRead(12), touch_base);
-  }
+  touchSetCycles(0xF000, 0x3000);
 }
 
 float getGramUntared(long raw)
@@ -160,38 +156,53 @@ int fast_settle = 0;
 
 void loop()
 {
-  M5.update();
-
   battery_level = M5.Power.getBatteryLevel();
   bool isCharging = M5.Power.isCharging();
 
   unsigned long ms = millis();
-  pre_infusion_timer.addValue(touchRead(12));
 
   static long pre_infusion_start = 0;
   static bool pre_infusion_freeze = false;
   long pre_infusion_time = 0;
 
-  long pre_infusion_val = pre_infusion_timer.getMedian();
+  pre_infusion_flt.addValue(touchRead(12));
+  long pre_infusion_cur = pre_infusion_flt.getMedian();
+  pre_infusion_timer.addValue(pre_infusion_cur);
+  long pre_infusion_old = pre_infusion_timer.getOldestValue();
 
-  if((touch_base - pre_infusion_val) > 4 && !pre_infusion_freeze)
+  static bool pre_infusion_raw_running = false;
+
+  if((pre_infusion_old - pre_infusion_cur) > 3)
   {
-    pre_infusion_time = ms - pre_infusion_start;
+    pre_infusion_raw_running = true;
   }
-  else if((touch_base - pre_infusion_val) <= 4)
+  else if((pre_infusion_cur - pre_infusion_old) > 3)
   {
-    pre_infusion_time = 0;
-    pre_infusion_start = ms;
-    pre_infusion_freeze = false;
+    pre_infusion_raw_running = false;
+  }
+
+  if(!pre_infusion_freeze)
+  {
+    if(pre_infusion_raw_running)
+    {
+      pre_infusion_time = ms - pre_infusion_start;
+    }
+    else
+    {
+      pre_infusion_time = 0;
+      pre_infusion_start = ms;
+    }
   }
 
   static long very_raw_weight = 0;
-  while(scale.available() != true);
+  while(!scale.available());
   very_raw_weight = scale.getReading();
 
-  //outlier_rejection_filter.addValue(very_raw_weight);
-  //long outlier_rejected_val = outlier_rejection_filter.getMedian();
-  long outlier_rejected_val = very_raw_weight;
+  M5.update();
+
+  outlier_rejection_filter.addValue(very_raw_weight);
+  long outlier_rejected_val = outlier_rejection_filter.getMedian();
+  //long outlier_rejected_val = very_raw_weight;
 
   static_value_filter.addValue(outlier_rejected_val);
 
@@ -267,29 +278,30 @@ void loop()
   long static_median = static_value_filter.getMedian();
   // check whether we have a (relatively) recent dynamic value which is in stark contrast to the slow FastRunningMedian
   long quick_settle_median = quick_settle_filter_trig.getMedian();
-  if(abs(getGramDiff(quick_settle_median - static_median)) > static_reset_thres)
+  float gram_diff = abs(getGramDiff(quick_settle_median - static_median));
+  if(gram_diff > static_reset_thres)
   {
     long quick_settle_median_val = quick_settle_filter_val.getMedian();
     quick_settle_filter_val.clear(quick_settle_median_val);
     quick_settle_filter_trig.clear(quick_settle_median_val);
     static_value_filter.clear(quick_settle_median_val);
 
-    fast_settle = 20; // about 1 second
+    fast_settle = (int)min(gram_diff * 4 / static_reset_thres, 15.0f);
   }
 
-  double display_lp_d = 0.98;
+  double display_lp_d = 0.985;
   if(fast_settle > 0)
   {
-    display_lp_d = 0;
-    if(fast_settle < 16)
+    display_lp_d = 0.05;
+    if(fast_settle < 8)
     {
       display_lp_d = 0.7;
     }
-    if(fast_settle < 10)
+    if(fast_settle < 4)
     {
       display_lp_d = 0.8;
     }
-    if(fast_settle < 5)
+    if(fast_settle < 2)
     {
       display_lp_d = 0.9;
     }
@@ -321,7 +333,15 @@ void loop()
 
   if(!shot_running)
   {
-    if(
+    if((abs(getGramDiff(shot_end_filter.getMedian() - shot_detection_current)) < shot_end_thres / 2))
+    {
+      // we don't really have a running shot as we'd end it right away, but be more strict
+      // in evaluating this (the / 2 part)
+      shot_start_millis = ms;
+      shot_start_cnt = 0;
+      shot_start_max = 0;
+    }
+    else if(
       getGram(shot_detection_current) > shot_start_thres_min &&
       getGram(shot_detection_current) < shot_start_thres_max &&
       shot_start_diff <= shot_start_max_incr
@@ -376,6 +396,7 @@ void loop()
   {
     shot_end_cnt = 0;
     shot_running = 0;
+    pre_infusion_freeze = false;
 
     if(shot_invalid)
     {
@@ -399,12 +420,12 @@ void loop()
   //auto_zero_filter_fast.getMedian(), auto_zero_last);
 
   Serial.printf("%f,%f,%f,%d,%f,%d,%d,%d\n", 
-  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt, pre_infusion_val);
+  getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt, pre_infusion_old);
 
-  float filtered_display_med = round(20.0 * getGram(display_lp)) / 20.0;
+  float filtered_display_med = round(100.0 * getGram(display_lp)) / 100.0;
   // no-one is interested in these small fluctuations when we really should display 0
   // of course this is cheating, but it makes for a nicer display
-  if(filtered_display_med < 0.05 && filtered_display_med > -0.05)
+  if(filtered_display_med < 0.1 && filtered_display_med > -0.1)
   {
     filtered_display_med = +0.0f;
   }
@@ -420,7 +441,7 @@ void loop()
     {
       ratio = getGram(display_lp) / bean_weight;
     }
-    ratio = round(10.0f * ratio) / 10.0f;
+    ratio = round(100.0f * ratio) / 100.0f;
     if(ratio <= 0)
     {
       ratio = +0;
@@ -434,6 +455,13 @@ void loop()
   img.setTextColor(TFT_CYAN);
 
   img.setTextSize(4);
+
+  if(shot_start_cnt > shot_start_cnt_disp_thres)
+  {
+    img.setCursor(10, 10);
+    img.printf("*");
+  }
+
   img.setCursor(10, 40);
   img.printf("%7.2fg", filtered_display_med);
 
@@ -447,7 +475,7 @@ void loop()
   if(pre_infusion_time != 0)
   {
     img.setCursor(10, 140);
-    img.printf(" %6.1fs PI", pre_infusion_time / 1000.0f);
+    img.printf("%6.1fs PI", pre_infusion_time / 1000.0f);
   }
 
   img.setTextSize(2);
@@ -487,7 +515,7 @@ void loop()
   }
 
   img.setCursor(5, 15);
-  img.printf("   Touch: %d", pre_infusion_val);
+  img.printf("   Touch: %d", pre_infusion_old);
 
   img.setBitmapColor(TFT_CYAN, TFT_BLACK);
   img.pushSprite(0, 0);
