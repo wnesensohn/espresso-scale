@@ -57,7 +57,7 @@ FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to ma
 FastRunningMedian<40> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
 
 float auto_tare_thres = 5000; // this is in 100ths of a gram
-float auto_tare_thres_min = 10; // this is in 100ths of a gram
+float auto_tare_thres_min = 5; // this is in 100ths of a gram
 
 FlowMeter flow_meter;
 
