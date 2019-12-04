@@ -67,6 +67,11 @@ public:
     return _sortbuffer[_median_ptr];
   }
 
+  long getNewestValue()
+  {
+    return _inbuffer[_buffer_ptr];
+  }
+
   long getOldestValue()
   {
     uint8_t oldest_ptr = _buffer_ptr + 1;

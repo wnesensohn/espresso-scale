@@ -5,15 +5,10 @@
 
 #include <M5Stack.h>
 #include <WiFi.h>
-//#include "HX711.h"
 #include "SparkFun_Qwiic_Scale_NAU7802_Arduino_Library.h"
 #include "HampelFilter.h"
 #include "FlowMeter.h"
 #include <EEPROM.h>
-//#include "utility/In_eSPI.h"
-//#include "utility/Sprite.h"
-//#include <TFT_eSPI.h>
-//#include <SPI.h>
 
 NAU7802 scale;
 
@@ -22,18 +17,18 @@ NAU7802 scale;
 //HX711 scale(16, 17); // GROVE C
 
 // TODO (general): 
-// * flow-rate measurement in g/s
-// * shot-time (if need be compensate for filter lag, but probably not necessary, after all it's just espresso ffs)
+// X flow-rate measurement in g/s
+// X shot-time (if need be compensate for filter lag, but probably not necessary, after all it's just espresso ffs)
 //   using dynamic-filtered (kalman-filtered) value
-// * double-buffer for display to prevent annoying flickering
-// * auto-zeroing (zero large weight-changes in small time-increments)
+// X double-buffer for display to prevent annoying flickering
+// X auto-zeroing (zero large weight-changes in small time-increments)
 // * zero-tracking (zero very small weight-changes happening over a long timespan)
 //   to compensate drift. There's not a lot of drift, and it's temperature related, but it's enough to be annoying.
 //   (actually, it's so low that we can do without drift-compensation. It might matter if using the scale in direct sunlight, which I don't)
-// * tare after filtering, as we have to reset filters to tare, which is sub-optimal and makes tare work not reliably enough
-// * calibration with known weights
-// * auto shut-down (not the annoying kind, something like "after 5 minutes after last weight change of more than 1g/30s")
-// * handle hx711 communication by using serial interface (don't know if possible yet) and DMA (low prio)
+// X tare after filtering, as we have to reset filters to tare, which is sub-optimal and makes tare work not reliably enough
+// X calibration with known weights
+// X auto shut-down (not the annoying kind, something like "after 5 minutes after last weight change of more than 1g/30s")
+// X handle hx711 communication by using serial interface (don't know if possible yet) and DMA (low prio)
 // X see if we can get a reliable capacity reading of the LiPo somehow to display when we need more juice - yes, works!
 // X switch to M5Stack - done
 
@@ -58,6 +53,11 @@ FastRunningMedian<23> shot_end_filter; // this may need to be adjusted up to mak
 
 FastRunningMedian<31> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
 FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to make shot-end detection more reliable
+
+FastRunningMedian<40> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
+
+float auto_tare_thres = 5000; // this is in 100ths of a gram
+float auto_tare_thres_min = 10; // this is in 100ths of a gram
 
 FlowMeter flow_meter;
 
@@ -202,7 +202,6 @@ void loop()
 
   outlier_rejection_filter.addValue(very_raw_weight);
   long outlier_rejected_val = outlier_rejection_filter.getMedian();
-  //long outlier_rejected_val = very_raw_weight;
 
   static_value_filter.addValue(outlier_rejected_val);
 
@@ -219,6 +218,7 @@ void loop()
     // at least somewhat similar to the real scale factor
 
     float current_gram = getGram(display_lp);
+
     int current_gram_tens = (int)((current_gram + 5.0f) / 10.0f);
 
     if(current_gram_tens < 1 || current_gram_tens > 10)
@@ -237,6 +237,8 @@ void loop()
     scale_calibrated = 1;
   }
 
+  auto_tare_flt.addValue(100 * getGram(display_lp));
+
   static long significant_change_detect = 0;
   static long significant_change_millis = 0;
   if(abs(getGramDiff(significant_change_detect - display_lp)) > 0.5)
@@ -251,7 +253,6 @@ void loop()
     scale.powerDown();
     M5.Power.deepSleep(0);
   }
-  
 
   if(M5.BtnC.wasReleased())
   {
@@ -261,7 +262,13 @@ void loop()
     }
   }
 
-  if(M5.BtnA.wasReleased() || (startup_time + 1500 > ms))
+  bool auto_tare = false;
+  if((auto_tare_flt.getNewestValue() - auto_tare_flt.getOldestValue()) < auto_tare_thres_min && (auto_tare_flt.getOldestValue() > auto_tare_thres))
+  {
+    auto_tare = true;
+  }
+
+  if(M5.BtnA.wasReleased() || (startup_time + 1500 > ms) || auto_tare)
   {
       _scale_tare = getGramUntared(display_lp);
 
@@ -273,6 +280,10 @@ void loop()
       shot_time = 0;
       flow_meter.clear();
       shot_end_millis = 0;
+
+      pre_infusion_freeze = false;
+      auto_tare = false;
+      auto_tare_flt.clear(0);
   }
 
   long static_median = static_value_filter.getMedian();
@@ -396,7 +407,6 @@ void loop()
   {
     shot_end_cnt = 0;
     shot_running = 0;
-    pre_infusion_freeze = false;
 
     if(shot_invalid)
     {
@@ -472,7 +482,7 @@ void loop()
     img.printf("%7.2fg/g", ratio);
   }
 
-  if(pre_infusion_time != 0)
+  if(pre_infusion_time != 0 && !pre_infusion_freeze)
   {
     img.setCursor(10, 140);
     img.printf("%6.1fs PI", pre_infusion_time / 1000.0f);
@@ -486,13 +496,27 @@ void loop()
     img.printf("%7.2fg dry", bean_weight);
   }
 
+  if(shot_running && (ms - shot_start_millis) >= shot_min_time_disp)
+  {
+    if(pre_infusion_time != 0 && pre_infusion_freeze)
+    {
+      img.setCursor(40, 150);
+      img.printf("%5.1fs PI", pre_infusion_time / 1000.0f);
+    }
 
-  img.setCursor(40, 180);
-  if(shot_running && (ms - shot_start_millis) >= shot_min_time_disp){
+    img.setCursor(40, 180);
     img.printf("%5.1fs", (ms - shot_start_millis) / 1000.0);
   }
-  else if(shot_time > 0){
-    img.printf("%5.1fs %3.1fg/s", (shot_time) / 1000.0, shot_end_weight * 1000.0 / shot_time);
+  else if(shot_time > 0)
+  {
+    if(pre_infusion_time != 0 && pre_infusion_freeze)
+    {
+      img.setCursor(40, 150);
+      img.printf("%5.1fs PI %3.1fg", pre_infusion_time / 1000.0f, shot_end_weight);
+    }
+
+    img.setCursor(40, 180);
+    img.printf("%5.1fs %3.1fg/s", shot_time / 1000.0, shot_end_weight * 1000.0 / shot_time);
   }
 
   img.setTextSize(1);
