@@ -54,9 +54,9 @@ FastRunningMedian<23> shot_end_filter; // this may need to be adjusted up to mak
 FastRunningMedian<31> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
 FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to make shot-end detection more reliable
 
-FastRunningMedian<40> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
+FastRunningMedian<60> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
 
-float auto_tare_thres = 5000; // this is in 100ths of a gram
+float auto_tare_thres = 6000; // this is in 100ths of a gram
 float auto_tare_thres_min = 5; // this is in 100ths of a gram
 
 FlowMeter flow_meter;
@@ -69,7 +69,7 @@ unsigned long shot_end_millis = 0;
 unsigned int shot_start_cnt_thres = 40;
 unsigned int shot_start_cnt_disp_thres = 5;
 unsigned int shot_start_cnt;
-unsigned long shot_time = 0;
+static unsigned long shot_time = 0;
 float shot_end_weight = 0.0f;
 
 uint8_t shot_running = 0;
@@ -237,7 +237,7 @@ void loop()
     scale_calibrated = 1;
   }
 
-  auto_tare_flt.addValue(100 * getGram(display_lp));
+  auto_tare_flt.addValue((long)(100.0f * getGram(display_lp)));
 
   static long significant_change_detect = 0;
   static long significant_change_millis = 0;
@@ -254,18 +254,30 @@ void loop()
     M5.Power.deepSleep(0);
   }
 
+  static bool auto_tare_active = true;
+
   if(M5.BtnC.wasReleased())
   {
     if(scale_calibrated)
     {
       scale_calibrated = 0;
     }
+    else 
+    {
+      auto_tare_active = !auto_tare_active;
+    }
   }
 
   bool auto_tare = false;
-  if((auto_tare_flt.getNewestValue() - auto_tare_flt.getOldestValue()) < auto_tare_thres_min && (auto_tare_flt.getOldestValue() > auto_tare_thres))
+  if(
+    (abs(auto_tare_flt.getMedian() - auto_tare_flt.getNewestValue())) < auto_tare_thres_min &&
+    (auto_tare_flt.getOldestValue() > auto_tare_thres) &&
+    (auto_tare_flt.getNewestValue() > auto_tare_thres))
   {
-    auto_tare = true;
+    if(auto_tare_active)
+    {
+      auto_tare = true;
+    }
   }
 
   if(M5.BtnA.wasReleased() || (startup_time + 1500 > ms) || auto_tare)
@@ -321,6 +333,8 @@ void loop()
 
   display_lp = display_lp * display_lp_d + (outlier_rejected_val * (1.0 - display_lp_d));
 
+  float display_weight = round(20.0 * getGram(display_lp)) / 20.0;
+
   static float bean_weight = 0.0f;
   if(M5.BtnB.wasReleased())
   {
@@ -330,7 +344,7 @@ void loop()
     }
     else
     {
-      bean_weight = getGram(display_lp);
+      bean_weight = display_weight;
     }
   }
 
@@ -418,7 +432,7 @@ void loop()
     {
       shot_end_millis = shot_end_real;
       shot_time = shot_end_millis - shot_start_millis;
-      shot_end_weight = getGram(outlier_rejected_val);
+      shot_end_weight = display_weight;
     }
   }
 
@@ -432,12 +446,10 @@ void loop()
   Serial.printf("%f,%f,%f,%d,%f,%d,%d,%d\n", 
   getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt, pre_infusion_old);
 
-  float filtered_display_med = round(100.0 * getGram(display_lp)) / 100.0;
-  // no-one is interested in these small fluctuations when we really should display 0
-  // of course this is cheating, but it makes for a nicer display
-  if(filtered_display_med < 0.1 && filtered_display_med > -0.1)
+  // prevent displaying -0 if the weight is something like -0.02g
+  if(display_weight < 0.05 && display_weight > -0.05)
   {
-    filtered_display_med = +0.0f;
+    display_weight = +0.0f;
   }
 
   float ratio = 0.0f;
@@ -466,16 +478,9 @@ void loop()
 
   img.setTextSize(4);
 
-  if(shot_start_cnt > shot_start_cnt_disp_thres)
-  {
-    img.setCursor(10, 10);
-    img.printf("*");
-  }
-
   img.setCursor(10, 40);
-  img.printf("%7.2fg", filtered_display_med);
+  img.printf("%7.2fg", display_weight);
 
-  //M5.Lcd.printf("%6.2f %d", filtered_display_med, touchRead(2));
   if(bean_weight != 0.0f)
   {
     img.setCursor(10, 90);
@@ -522,11 +527,17 @@ void loop()
   img.setTextSize(1);
   img.setCursor(29, 227);
   img.printf("Tare & Reset");
-  img.setCursor(139, 227);
+  img.setCursor(138, 227);
   img.printf("Set Dry");
-  img.setCursor(221, 227);
-  img.printf("Calibration");
 
+  img.setCursor(209, 227);
+  if(!auto_tare_active)
+  {
+    img.setTextColor(TFT_BLACK, TFT_CYAN);
+  }
+  img.printf("AutoTare | Cal");
+
+  img.setTextColor(TFT_CYAN);
 
   img.setCursor(5, 3);
   if(isCharging)
@@ -540,6 +551,12 @@ void loop()
 
   img.setCursor(5, 15);
   img.printf("   Touch: %d", pre_infusion_old);
+
+  if(shot_start_cnt > shot_start_cnt_disp_thres)
+  {
+    img.setCursor(5, 27);
+    img.printf("*");
+  }
 
   img.setBitmapColor(TFT_CYAN, TFT_BLACK);
   img.pushSprite(0, 0);
