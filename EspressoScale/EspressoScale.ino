@@ -49,7 +49,7 @@ FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
 FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
-FastRunningMedian<23> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<20> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
 FastRunningMedian<31> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
 FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to make shot-end detection more reliable
@@ -72,15 +72,15 @@ unsigned int shot_start_cnt;
 static unsigned long shot_time = 0;
 float shot_end_weight = 0.0f;
 
-uint8_t shot_running = 0;
+bool shot_running = 0;
 
 // [g] - if the dynamic weight differs from the shot_end_filter median by less than this amount, count the shot as ended
-float shot_end_thres = 0.20;
+float shot_end_thres = 0.1;
 // [s] - the shot lasts at least that long, don't end it before!
-long shot_min_time = 10000;
-long shot_min_time_disp = 5000;
+long shot_min_time = 7000;
+long shot_min_time_disp = 2000;
 
-unsigned int shot_end_cnt_thres = 40;
+unsigned int shot_end_cnt_thres = 20;
 unsigned int shot_end_cnt;
 
 int8_t battery_level = 0;
@@ -150,20 +150,19 @@ float getGramDiff(long raw)
 
 TFT_eSprite img = TFT_eSprite(&M5.Lcd);
 
-long display_lp = 0;
-
-int fast_settle = 0;
 
 void loop()
 {
   battery_level = M5.Power.getBatteryLevel();
   bool isCharging = M5.Power.isCharging();
 
-  unsigned long ms = millis();
-
   static long pre_infusion_start = 0;
   static bool pre_infusion_freeze = false;
-  long pre_infusion_time = 0;
+  static long pre_infusion_time = 0;
+  static long display_lp = 0;
+  static int fast_settle = 0;
+
+  unsigned long ms = millis();
 
   pre_infusion_flt.addValue(touchRead(12));
   long pre_infusion_cur = pre_infusion_flt.getMedian();
@@ -285,7 +284,7 @@ void loop()
       _scale_tare = getGramUntared(display_lp);
 
       // reset shot thingy
-      shot_running = 0;
+      shot_running = false;
       shot_start_cnt = 0;
       shot_end_cnt = 0;
       shot_end_weight = 0;
@@ -334,9 +333,14 @@ void loop()
   display_lp = display_lp * display_lp_d + (outlier_rejected_val * (1.0 - display_lp_d));
 
   float display_weight = round(20.0 * getGram(display_lp)) / 20.0;
+  // prevent displaying -0 
+  if(display_weight < 0.05 && display_weight > -0.05)
+  {
+    display_weight = +0.0f;
+  }
 
   static float bean_weight = 0.0f;
-  if(M5.BtnB.wasReleased())
+  if(M5.BtnB.wasPressed())
   {
     if(bean_weight != 0.0f)
     {
@@ -388,7 +392,7 @@ void loop()
     shot_end_millis == 0)
   {
     shot_start_cnt = 0;
-    shot_running = 1;
+    shot_running = true;
     flow_meter.clear();
     pre_infusion_freeze = true;
   }
@@ -399,14 +403,10 @@ void loop()
   if((abs(getGramDiff(shot_end_filter.getMedian() - shot_detection_current)) < shot_end_thres) && 
     shot_running)
   {
-    if((ms - shot_start_millis) > shot_min_time)
-    {
-      shot_end_cnt++;
-    }
-    else
+    shot_end_cnt++;
+    if((ms - shot_start_millis) < shot_min_time)
     {
       shot_invalid = true;
-      shot_end_cnt++;
     }
   }
   else
@@ -420,7 +420,7 @@ void loop()
   if(shot_end_cnt >= shot_end_cnt_thres)
   {
     shot_end_cnt = 0;
-    shot_running = 0;
+    shot_running = false;
 
     if(shot_invalid)
     {
@@ -438,19 +438,8 @@ void loop()
 
   flow_meter.addValue(ms, getGram(outlier_rejected_val));
 
-  // debugging & tweaking
-  //Serial.printf("filtered=%f,vraw=%f,raw=%f,shot_start_cnt=%d,shot_running=%d,shot_start_millis=%ld,shot_end_median=%f,shot_end_cnt=%d,shot_end_millis=%ld,shot_time=%ld,flow=%f,az=%f,az_l=%f\n", 
-  //display_lp, very_raw_weight, raw_weight, shot_start_cnt, shot_running, shot_start_millis, shot_end_filter.getMedian(), shot_end_cnt, shot_end_millis, shot_time, flow_meter.getCurrentFlow(),
-  //auto_zero_filter_fast.getMedian(), auto_zero_last);
-
   Serial.printf("%f,%f,%f,%d,%f,%d,%d,%d\n", 
   getGram(very_raw_weight), getGram(outlier_rejected_val), getGram(display_lp), fast_settle, shot_start_diff, shot_start_cnt, shot_end_cnt, pre_infusion_old);
-
-  // prevent displaying -0 if the weight is something like -0.02g
-  if(display_weight < 0.05 && display_weight > -0.05)
-  {
-    display_weight = +0.0f;
-  }
 
   float ratio = 0.0f;
   if(bean_weight != 0.0f)
@@ -501,27 +490,30 @@ void loop()
     img.printf("%7.2fg dry", bean_weight);
   }
 
-  if(shot_running && (ms - shot_start_millis) >= shot_min_time_disp)
+  if(shot_running)
   {
-    if(pre_infusion_time != 0 && pre_infusion_freeze)
+    if(pre_infusion_time != 0)
     {
       img.setCursor(40, 150);
       img.printf("%5.1fs PI", pre_infusion_time / 1000.0f);
     }
-
-    img.setCursor(40, 180);
-    img.printf("%5.1fs", (ms - shot_start_millis) / 1000.0);
+    
+    if((ms - shot_start_millis) >= shot_min_time_disp)
+    {
+      img.setCursor(40, 180);
+      img.printf("%5.1fs", (ms - shot_start_millis) / 1000.0f);
+    }
   }
   else if(shot_time > 0)
   {
-    if(pre_infusion_time != 0 && pre_infusion_freeze)
+    if(pre_infusion_time != 0)
     {
       img.setCursor(40, 150);
       img.printf("%5.1fs PI %3.1fg", pre_infusion_time / 1000.0f, shot_end_weight);
     }
 
     img.setCursor(40, 180);
-    img.printf("%5.1fs %3.1fg/s", shot_time / 1000.0, shot_end_weight * 1000.0 / shot_time);
+    img.printf("%5.1fs %3.1fg/s", shot_time / 1000.0f, shot_end_weight * 1000.0f / shot_time);
   }
 
   img.setTextSize(1);
@@ -552,7 +544,7 @@ void loop()
   img.setCursor(5, 15);
   img.printf("   Touch: %d", pre_infusion_old);
 
-  if(shot_start_cnt > shot_start_cnt_disp_thres)
+  if(shot_start_cnt > shot_start_cnt_disp_thres || shot_running)
   {
     img.setCursor(5, 27);
     img.printf("*");
