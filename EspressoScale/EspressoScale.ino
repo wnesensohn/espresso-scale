@@ -41,7 +41,7 @@ float static_reset_thres = 0.10;
 
 // [g] shot-start-threshold-min
 // depends on the scale being zeroed
-float shot_start_thres_min = 0.3;
+float shot_start_thres_min = 0.2;
 float shot_start_thres_max = 6.0;
 float shot_start_max_incr = 1.0;
 
@@ -49,15 +49,16 @@ FastRunningMedian<3> outlier_rejection_filter;
 FastRunningMedian<100> static_value_filter; // slowest filter, therefore also most accurate, good for drift compensation
 FastRunningMedian<5> quick_settle_filter_trig; // this may need to be adjusted down to 4 or 3 to improve settling time
 FastRunningMedian<3> quick_settle_filter_val; // this may need to be adjusted down to 4 or 3 to improve settling time
-FastRunningMedian<20> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<60> shot_end_filter; // this may need to be adjusted up to make shot-end detection more reliable
 
-FastRunningMedian<31> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
+FastRunningMedian<90> pre_infusion_timer; // this may need to be adjusted up to make shot-end detection more reliable
 FastRunningMedian<11> pre_infusion_flt; // this may need to be adjusted up to make shot-end detection more reliable
 
-FastRunningMedian<60> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
+FastRunningMedian<80> auto_tare_flt; // this may need to be adjusted up to make auto-tare more reliable
 
 float auto_tare_thres = 6000; // this is in 100ths of a gram
-float auto_tare_thres_min = 5; // this is in 100ths of a gram
+float zero_tare_thres = 10; // this is in 100ths of a gram
+float auto_tare_thres_min = 3; // this is in 100ths of a gram
 
 FlowMeter flow_meter;
 
@@ -246,7 +247,7 @@ void loop()
     significant_change_millis = ms;
     Serial.printf("significant change detected\n");
   }
-  else if((ms - significant_change_millis) > (15 * 60 * 1000))
+  else if((ms - significant_change_millis) > (15 * 60 * 1000) && !isCharging)
   {
     // 15 minutes no activity - deep sleep!
     scale.powerDown();
@@ -268,15 +269,24 @@ void loop()
   }
 
   bool auto_tare = false;
+
   if(
     (abs(auto_tare_flt.getMedian() - auto_tare_flt.getNewestValue())) < auto_tare_thres_min &&
     (auto_tare_flt.getOldestValue() > auto_tare_thres) &&
-    (auto_tare_flt.getNewestValue() > auto_tare_thres))
+    (auto_tare_flt.getNewestValue() > auto_tare_thres) &&
+    auto_tare_active)
   {
-    if(auto_tare_active)
-    {
-      auto_tare = true;
-    }
+    auto_tare = true;
+  }
+  else if(
+    (abs(auto_tare_flt.getMedian() - auto_tare_flt.getNewestValue())) < auto_tare_thres_min &&
+    (auto_tare_flt.getNewestValue() < zero_tare_thres) &&
+    (auto_tare_flt.getNewestValue() > -zero_tare_thres))
+  {
+    // this is zero-tare, it should always be active as it's somehow annoying if zero drifts,
+    // but other than being annoying it's inconsequential.
+    _scale_tare = getGramUntared(display_lp);
+    auto_tare_flt.clear(0);
   }
 
   if(M5.BtnA.wasReleased() || (startup_time + 1500 > ms) || auto_tare)
@@ -335,6 +345,12 @@ void loop()
   float display_weight = round(20.0 * getGram(display_lp)) / 20.0;
   // prevent displaying -0 
   if(display_weight < 0.05 && display_weight > -0.05)
+  {
+    display_weight = +0.0f;
+  }
+
+  bool blankWeight = startup_time + 700 > ms;
+  if(blankWeight)
   {
     display_weight = +0.0f;
   }
@@ -519,10 +535,10 @@ void loop()
   img.setTextSize(1);
   img.setCursor(29, 227);
   img.printf("Tare & Reset");
-  img.setCursor(138, 227);
+  img.setCursor(139, 227);
   img.printf("Set Dry");
 
-  img.setCursor(209, 227);
+  img.setCursor(212, 227);
   if(!auto_tare_active)
   {
     img.setTextColor(TFT_BLACK, TFT_CYAN);
